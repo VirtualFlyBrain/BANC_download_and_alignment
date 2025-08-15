@@ -76,7 +76,14 @@ def detect_neuron_primary_region(neuron_data):
     :return: tuple of ('brain' or 'vnc', span_ratio)
     """
     if hasattr(neuron_data, 'nodes'):
-        z_coords = neuron_data.nodes['z'].values if 'z' in neuron_data.nodes else neuron_data.nodes[2]
+        # Safely access z coordinates
+        if 'z' in neuron_data.nodes.columns:
+            z_coords = neuron_data.nodes['z'].values
+        elif len(neuron_data.nodes.columns) >= 3:
+            z_coords = neuron_data.nodes.iloc[:, 2].values  # Third column as z
+        else:
+            print("Warning: Cannot find z coordinates in neuron data")
+            return 'brain', 1.0
         
         # These thresholds are approximate and may need adjustment based on BANC coordinates
         # The brain-VNC boundary is roughly around Z=150000 nm in BANC space
@@ -197,14 +204,6 @@ def transform_banc_to_jrc2018f(neuron_data, temp_dir, force_region=None):
 def process_banc_neuron(body_id, folder_url):
     """
     Process each BANC neuron to download and transform data, then save the required files.
-    Handles neurons that may span both brain and VNC.
-    
-    :param body_id: int, ID of the neuron to process
-    :param folder_url: str, URL of the folder where the data is stored (contains template short_form)
-    """
-def process_banc_neuron(body_id, folder_url):
-    """
-    Process each BANC neuron to download and transform data, then save the required files.
     Handles neurons that may span both brain and VNC, saving to appropriate template folders.
     
     Folder structure: /VFB/i/[first_4_digits]/[next_4_digits]/[template_short_form]/
@@ -319,7 +318,7 @@ def process_banc_neuron(body_id, folder_url):
                 
                 # Check if we should skip or redo
                 if os.path.exists(swc_filename):
-                    if os.environ.get('redo') == 'true':
+                    if os.environ.get('redo', '').lower() == 'true':
                         print(f"     Removing old files in {local_folder_path}...")
                         delete_volume_files(local_folder_path)
                     else:
@@ -344,8 +343,13 @@ def process_banc_neuron(body_id, folder_url):
                                 mesh_transformed = navis.xform_brain(mesh_neuron, source='BANC', target=template_name)
                                 
                                 if mesh_transformed:
-                                    navis.write_mesh(mesh_transformed, mesh_filename)
-                                    print(f"     Mesh saved: {mesh_filename.replace('/IMAGE_WRITE/', 'http://www.virtualflybrain.org/data/')}")
+                                    try:
+                                        navis.write_mesh(mesh_transformed, mesh_filename)
+                                        print(f"     Mesh saved: {mesh_filename.replace('/IMAGE_WRITE/', 'http://www.virtualflybrain.org/data/')}")
+                                    except AttributeError:
+                                        print(f"     Warning: navis.write_mesh not available, skipping mesh for {body_id}")
+                                    except Exception as e:
+                                        print(f"     Warning: Failed to write mesh: {e}")
                     except Exception as e:
                         print(f"     Warning: Failed to process mesh: {e}")
                     
@@ -353,7 +357,11 @@ def process_banc_neuron(body_id, folder_url):
                     try:
                         nrrd_filename = os.path.join(local_folder_path, "volume.nrrd")
                         if not os.path.exists(nrrd_filename) or os.path.getsize(nrrd_filename) < 1000:
-                            # Use appropriate bounds based on template
+                            # Scale neuron from nanometers to microns for voxelization
+                            neuron_microns = transformed_neuron.copy()
+                            neuron_microns.nodes[['x', 'y', 'z']] = neuron_microns.nodes[['x', 'y', 'z']] / 1000
+                            
+                            # Use appropriate bounds based on template (in microns)
                             if 'VNC' in template_name.upper():
                                 # VNC template bounds (these may need adjustment)
                                 bounds = [[0, 300], [0, 200], [0, 400]]
@@ -361,13 +369,18 @@ def process_banc_neuron(body_id, folder_url):
                                 # Brain template bounds (JRC2018U)
                                 bounds = [[0, 627.3695649], [0, 293.1875965], [0, 173]]
                             
-                            vx = navis.voxelize(transformed_neuron,
-                                              pitch=['0.5189161 microns', '0.5189161 microns', '1.0 microns'],
+                            vx = navis.voxelize(neuron_microns,
+                                              pitch=[0.5189161, 0.5189161, 1.0],  # pitch in microns
                                               bounds=bounds,
                                               parallel=True)
                             vx.grid = (vx.grid).astype('uint8') * 255
-                            navis.write_nrrd(vx, filepath=nrrd_filename, compression_level=9)
-                            print(f"     NRRD saved: {nrrd_filename.replace('/IMAGE_WRITE/', 'http://www.virtualflybrain.org/data/')}")
+                            try:
+                                navis.write_nrrd(vx, filepath=nrrd_filename, compression_level=9)
+                                print(f"     NRRD saved: {nrrd_filename.replace('/IMAGE_WRITE/', 'http://www.virtualflybrain.org/data/')}")
+                            except AttributeError:
+                                print(f"     Warning: navis.write_nrrd not available, skipping NRRD for {body_id}")
+                            except Exception as e:
+                                print(f"     Warning: Failed to write NRRD: {e}")
                     except Exception as e:
                         print(f"     Warning: Failed to create NRRD: {e}")
             
@@ -409,6 +422,11 @@ def main():
     max_chunk_size = int(os.environ.get('max_chunk_size', 10))
     max_workers = int(os.environ.get('max_workers', 5))
 
+    # Warning: R operations are not thread-safe
+    if R_AVAILABLE and max_workers > 1:
+        print("Warning: Using rpy2 with multiple workers may cause thread safety issues.")
+        print("Consider setting max_workers=1 or use subprocess mode for R.")
+
     # Process in chunks using ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
@@ -416,7 +434,7 @@ def main():
 
         for index, result in query_data_df.iterrows():
             print(f"Processing item {index + 1} of {total_items}")
-            body_id, folder_url = result
+            body_id, folder_url = result[0], result[1]
             try:
                 body_id = int(body_id)
             except ValueError as e:
