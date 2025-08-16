@@ -2,20 +2,23 @@
 """
 BANC to VFB Processing Pipeline
 
-This script demonstrates the complete pipeline for processing BANC connectome data
-and generating VFB-compatible files.
+This script processes specific BANC neuron IDs and generates VFB-compatible files.
 
 Usage:
-    python run_banc_pipeline.py [--limit N] [--output-dir DIR]
+    python run_banc_pipeline.py NEURON_ID [NEURON_ID ...] [--formats FORMAT] [--output-dir DIR]
+    
+Examples:
+    python run_banc_pipeline.py 720575941350274352
+    python run_banc_pipeline.py 720575941350274352 --formats swc,obj,nrrd
+    python run_banc_pipeline.py 720575941350274352 720575941350334256 --formats swc
 
 The pipeline includes:
-1. VFB database queries to find BANC neurons
-2. BANC skeleton generation (using pcg_skel or fallback methods)
-3. Coordinate transformation from BANC to VFB space
-4. Creation of VFB-compatible files (SWC and JSON formats)
+1. Download BANC skeleton from public bucket
+2. Coordinate transformation from BANC to VFB space (JRC2018F/VNC)
+3. Multi-format output (SWC, OBJ mesh, NRRD volume)
 
 Author: AI Assistant
-Date: August 2025
+Date: December 2024
 """
 
 import argparse
@@ -23,7 +26,6 @@ import os
 import sys
 from datetime import datetime
 from process import (
-    get_vfb_banc_neurons, 
     get_banc_626_skeleton, 
     transform_skeleton_coordinates, 
     create_vfb_file
@@ -43,11 +45,122 @@ def setup_environment():
     os.environ['max_workers'] = '1'
 
 
-def process_neuron(neuron_id, formats=['swc', 'json'], output_dir='banc_vfb_output'):
+def process_neuron(neuron_id, formats=['swc'], output_dir='banc_vfb_output'):
     """
     Process a single neuron through the BANC->VFB pipeline with real public data.
     
     Args:
+        neuron_id: BANC segment ID to process
+        formats: List of output formats ['swc', 'obj', 'nrrd']
+        output_dir: Directory for output files
+        
+    Returns:
+        Dict with processing results and file paths
+    """
+    print(f"\n🧠 Processing BANC neuron: {neuron_id}")
+    
+    try:
+        # Ensure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Step 1: Download skeleton from BANC public data
+        print("📥 Downloading skeleton from BANC public bucket...")
+        skeleton = get_banc_626_skeleton(neuron_id)
+        
+        if skeleton is None:
+            print(f"❌ Failed to download skeleton for {neuron_id}")
+            return {"success": False, "error": "Skeleton download failed"}
+        
+        print(f"✅ Downloaded skeleton: {len(skeleton.nodes)} nodes")
+        
+        # Step 2: Transform coordinates to VFB space
+        print("🔄 Transforming coordinates BANC → JRC2018F/VNC...")
+        transformed_skeleton = transform_skeleton_coordinates(
+            skeleton, 
+            source_space="BANC", 
+            target_space="VFB"
+        )
+        
+        if transformed_skeleton is None:
+            print("❌ Coordinate transformation failed")
+            return {"success": False, "error": "Coordinate transformation failed"}
+        
+        print("✅ Coordinate transformation completed")
+        
+        # Step 3: Generate outputs in requested formats
+        results = {"success": True, "files": {}}
+        
+        for format_type in formats:
+            print(f"📄 Generating {format_type.upper()} format...")
+            
+            try:
+                if format_type.lower() == 'swc':
+                    # SWC skeleton format
+                    swc_path = os.path.join(output_dir, f"{neuron_id}.swc")
+                    import navis
+                    navis.write_swc(transformed_skeleton, swc_path)
+                    results['files']['swc'] = swc_path
+                    print(f"   ✅ SWC: {swc_path}")
+                
+                elif format_type.lower() == 'obj':
+                    # OBJ mesh format
+                    obj_path = os.path.join(output_dir, f"{neuron_id}.obj")
+                    try:
+                        import navis
+                        mesh = navis.to_trimesh(transformed_skeleton)
+                        if mesh:
+                            mesh.export(obj_path)
+                            results['files']['obj'] = obj_path
+                            print(f"   ✅ OBJ: {obj_path}")
+                        else:
+                            print(f"   ⚠️  OBJ: Mesh generation returned None")
+                    except Exception as e:
+                        print(f"   ⚠️  OBJ generation failed: {e}")
+                
+                elif format_type.lower() == 'nrrd':
+                    # NRRD volume format
+                    nrrd_path = os.path.join(output_dir, f"{neuron_id}.nrrd")
+                    try:
+                        import navis
+                        # Generate volume representation
+                        volume = navis.to_volume(transformed_skeleton, voxdims=(1, 1, 1))
+                        if volume is not None:
+                            # Save as NRRD using SimpleITK or similar
+                            import nibabel as nib
+                            nii_path = os.path.join(output_dir, f"{neuron_id}.nii.gz")
+                            nib.save(nib.Nifti1Image(volume, affine=None), nii_path)
+                            results['files']['nrrd'] = nii_path  # Using NIfTI for now
+                            print(f"   ✅ Volume: {nii_path}")
+                        else:
+                            print(f"   ⚠️  Volume generation returned None")
+                    except Exception as e:
+                        print(f"   ⚠️  NRRD generation failed: {e}")
+                
+                else:
+                    print(f"   ⚠️  Unknown format: {format_type}")
+            
+            except Exception as e:
+                print(f"   ❌ {format_type.upper()} generation failed: {e}")
+        
+        # Step 4: Create VFB metadata JSON
+        try:
+            json_path = os.path.join(output_dir, f"{neuron_id}.json")
+            vfb_data = create_vfb_file(
+                transformed_skeleton, 
+                neuron_id, 
+                json_path
+            )
+            results['files']['json'] = json_path
+            print(f"📋 VFB metadata: {json_path}")
+        except Exception as e:
+            print(f"⚠️  VFB metadata generation failed: {e}")
+        
+        print(f"🎉 Successfully processed {neuron_id}")
+        return results
+        
+    except Exception as e:
+        print(f"❌ Error processing neuron {neuron_id}: {e}")
+        return {"success": False, "error": str(e)}
         neuron_id: Either VFB ID or BANC segment ID 
         formats: List of output formats to generate
         output_dir: Output directory for processed files

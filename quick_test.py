@@ -72,8 +72,8 @@ def test_pipeline_processing():
             process_vfb_neuron_with_banc_data
         )
         
-        # Use a small test neuron ID
-        test_neuron_id = "648518346349541188"  # Small brain neuron
+        # Use a real neuron ID from the BANC public data
+        test_neuron_id = "720575941350274352"  # First neuron from public bucket
         
         print(f"Processing test neuron: {test_neuron_id}")
         
@@ -113,7 +113,7 @@ def test_pipeline_processing():
             # OBJ (if mesh generation works)
             try:
                 print("  Testing mesh generation...")
-                mesh = navis.to_trimesh_mesh(transformed)
+                mesh = navis.to_trimesh(transformed)
                 if mesh:
                     obj_path = output_dir / f"{test_neuron_id}.obj"
                     mesh.export(str(obj_path))
@@ -126,7 +126,7 @@ def test_pipeline_processing():
             # NRRD (if volume generation works)
             try:
                 print("  Testing volume generation...")
-                volume = navis.rasterize(transformed, resolution=1.0)
+                volume = navis.to_volume(transformed, voxdims=(1, 1, 1))
                 if volume is not None:
                     import nibabel as nib
                     nrrd_path = output_dir / f"{test_neuron_id}.nrrd"

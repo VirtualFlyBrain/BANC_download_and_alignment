@@ -131,7 +131,16 @@ def get_banc_626_skeleton(segment_id, output_dir='banc_output'):
         
         if result.returncode == 0:
             print(f"Skeleton successfully downloaded to: {swc_file}")
-            return swc_file
+            
+            # Load the skeleton with navis and return the skeleton object
+            try:
+                import navis
+                skeleton = navis.read_swc(swc_file)
+                print(f"Skeleton loaded: {len(skeleton.nodes)} nodes")
+                return skeleton
+            except Exception as e:
+                print(f"Error loading skeleton from {swc_file}: {e}")
+                return None
         else:
             print(f"Error downloading skeleton: {result.stderr}")
             # Check if the file exists in the bucket
