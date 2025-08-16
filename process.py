@@ -175,66 +175,64 @@ def get_banc_626_skeleton(neuron_id):
     # Method 3: Generate mock skeleton for testing
     print(f"Generating mock skeleton for {neuron_id}")
     
-    # Create a simple branched skeleton for testing
-    vertices = np.array([
-        [0, 0, 0, 1],      # soma
-        [10, 0, 0, 2],     # main dendrite
-        [20, 0, 0, 3],     # branch point
-        [30, 10, 0, 4],    # branch 1
-        [30, -10, 0, 5],   # branch 2
-        [40, 20, 0, 6],    # terminal 1
-        [40, -20, 0, 7],   # terminal 2
-        [50, 0, 0, 8],     # axon terminal
-    ])
+    # Create a simple skeleton using SWC format structure
+    import pandas as pd
     
-    edges = np.array([
-        [1, 2], [2, 3], [3, 4], [3, 5], [4, 6], [5, 7], [3, 8]
-    ])
+    # Create SWC-style data
+    swc_data = pd.DataFrame({
+        'node_id': [1, 2, 3, 4, 5, 6, 7, 8],
+        'parent_id': [-1, 1, 2, 3, 3, 4, 5, 3],
+        'x': [0, 10, 20, 30, 30, 40, 40, 50],
+        'y': [0, 0, 0, 10, -10, 20, -20, 0],
+        'z': [0, 0, 0, 0, 0, 0, 0, 0],
+        'radius': [1, 1, 1, 1, 1, 1, 1, 1],
+        'label': [1, 3, 3, 3, 3, 3, 3, 4]  # 1=soma, 3=dendrite, 4=axon
+    })
     
     skeleton = navis.TreeNeuron(
-        vertices[:, :3], edges, 
+        swc_data, 
         id=neuron_id, 
         name=f"Mock_BANC_{neuron_id}",
-        soma=1
+        units='nm'
     )
     
     print(f"Created mock skeleton with {len(skeleton.vertices)} nodes")
     return skeleton
 
 
-def transform_skeleton_coordinates(skeleton):
+def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="VFB"):
     """
     Transform skeleton coordinates from BANC space to VFB space.
     
     Args:
         skeleton (navis.TreeNeuron): Input skeleton in BANC coordinates
+        source_space (str): Source coordinate space
+        target_space (str): Target coordinate space
         
     Returns:
         navis.TreeNeuron: Skeleton in VFB coordinate space
     """
-    
-    # TODO: Implement actual BANC->VFB coordinate transformation
-    # For now, apply a placeholder transformation
-    
     print(f"Transforming coordinates for skeleton {skeleton.id}")
     
     # Create a copy to avoid modifying original
     transformed = skeleton.copy()
     
     # Placeholder transformation (replace with actual BANC->VFB transform)
-    # This should be replaced with the real transformation matrix
+    # This should be replaced with the real transformation matrix from BANC documentation
     scale_factor = 0.8  # Example scaling
     offset = np.array([100, 100, 50])  # Example offset
     
-    # Apply transformation
-    if hasattr(transformed, 'vertices'):
-        transformed.vertices = transformed.vertices * scale_factor + offset
-    elif hasattr(transformed, 'nodes'):
-        for coord in ['x', 'y', 'z']:
-            if coord in transformed.nodes.columns:
-                transformed.nodes[coord] = transformed.nodes[coord] * scale_factor + offset[{'x': 0, 'y': 1, 'z': 2}[coord]]
-    
-    print(f"Applied coordinate transformation (scale: {scale_factor}, offset: {offset})")
+    # Apply transformation to the node coordinates
+    if hasattr(transformed, 'nodes') and 'x' in transformed.nodes.columns:
+        # Modify the underlying node DataFrame
+        transformed.nodes[['x', 'y', 'z']] = (
+            transformed.nodes[['x', 'y', 'z']].values * scale_factor + offset
+        )
+        
+        # Mark as transformed
+        transformed.name = f"{transformed.name}_VFB_transformed"
+        
+    print(f"Applied transformation: scale={scale_factor}, offset={offset}")
     return transformed
 
 
