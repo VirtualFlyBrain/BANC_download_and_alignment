@@ -278,11 +278,10 @@ def list_available_banc_neurons(limit=100):
 
 def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="VFB"):
     """
-    Transform skeleton coordinates between different template spaces.
+    Transform skeleton coordinates between different template spaces using BANC's official transforms.
     
-    Current implementation uses navis-flybrains when transforms are available,
-    with fallback to identity transform for BANC data until proper transforms
-    are integrated into navis-flybrains.
+    The BANC team has provided official transformation functions in their repository:
+    https://github.com/jasper-tms/the-BANC-fly-connectome/tree/main/fanc/transforms
     
     Args:
         skeleton: navis TreeNeuron object
@@ -296,32 +295,83 @@ def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="
     import numpy as np
     
     try:
-        # Import flybrains for coordinate transformations
-        import flybrains
-        
         print(f"Transforming coordinates from {source_space} to {target_space}")
         
-        # Handle BANC-specific transformations
+        # Handle BANC-specific transformations using official BANC transforms
         if source_space == "BANC":
             if target_space in ["VFB", "JRC2018F", "JRC2018U"]:
-                print("Warning: BANC -> JRC2018 transforms not yet available in navis-flybrains")
-                print("The BANC team has created aligned templates (JRC2018F_aligned240721_to_BANC.ng)")
-                print("but transformation matrices are not yet publicly available.")
-                print("Using identity transform as placeholder.")
+                print("Using official BANC transformation functions")
                 
-                # Future implementation when BANC transforms are available:
-                # if target_space == "JRC2018F":
-                #     # Use BANC brain -> JRC2018F brain transform
-                #     transformed = navis.xform_brain(skeleton, source='BANC_brain', target='JRC2018F')
-                # elif target_space == "JRC2018U":
-                #     # Chain transform: BANC -> JRC2018F -> JRC2018U
-                #     transformed = navis.xform_brain(skeleton, source='BANC', target='JRC2018U')
+                try:
+                    # Try to import BANC transformation functions
+                    from fanc.transforms.template_alignment import (
+                        warp_points_BANC_to_template,
+                        warp_points_BANC_to_brain_template,
+                        warp_points_BANC_to_vnc_template
+                    )
+                    
+                    # Get skeleton coordinates
+                    points = skeleton.nodes[['x', 'y', 'z']].values
+                    
+                    # Determine if this is brain or VNC based on y-coordinate
+                    # From BANC wiki: brain (z: 0-6206), VNC (z: 1438-7009)
+                    # In nm coordinates: y > ~320,000 is typically VNC region
+                    avg_y = np.mean(points[:, 1])
+                    
+                    if avg_y > 320000:  # VNC region
+                        print(f"Detected VNC neuron (avg y: {avg_y:.0f}nm), using VNC template transform")
+                        transformed_points = warp_points_BANC_to_vnc_template(
+                            points,
+                            input_units='nanometers',
+                            output_units='microns'
+                        )
+                        coordinate_space = "JRCVNC2018F"
+                    else:  # Brain region
+                        print(f"Detected brain neuron (avg y: {avg_y:.0f}nm), using brain template transform")
+                        transformed_points = warp_points_BANC_to_brain_template(
+                            points,
+                            input_units='nanometers',
+                            output_units='microns'
+                        )
+                        coordinate_space = "JRC2018F"
+                    
+                    # Update skeleton coordinates
+                    skeleton_copy = skeleton.copy()
+                    skeleton_copy.nodes.loc[:, ['x', 'y', 'z']] = transformed_points
+                    
+                    # If target is VFB (which typically uses JRC2018U), chain transforms
+                    if target_space == "VFB" and coordinate_space == "JRC2018F":
+                        print("Chaining transform: JRC2018F -> JRC2018U for VFB compatibility")
+                        try:
+                            import flybrains
+                            final_points = navis.xform_brain(
+                                transformed_points, 
+                                source='JRC2018F', 
+                                target='JRC2018U'
+                            )
+                            skeleton_copy.nodes.loc[:, ['x', 'y', 'z']] = final_points
+                        except Exception as e:
+                            print(f"JRC2018F->JRC2018U transform failed: {e}")
+                            print("Using JRC2018F coordinates")
+                    
+                    print(f"Successfully transformed to {coordinate_space} template space")
+                    return skeleton_copy
+                    
+                except ImportError as e:
+                    print(f"BANC transform package not available: {e}")
+                    print("To use official BANC transforms, install the BANC package:")
+                    print("git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git")
+                    print("cd the-BANC-fly-connectome && pip install -e .")
+                    print("Also requires: pip install git+https://github.com/jasper-tms/pytransformix.git")
+                    print("And elastix binary in PATH")
+                    return skeleton.copy()
                 
-                # For now, return unchanged skeleton
-                return skeleton.copy()
+                except Exception as e:
+                    print(f"BANC transformation failed: {e}")
+                    print("Using identity transform as fallback")
+                    return skeleton.copy()
             
             elif target_space == "FANC":
-                # BANC VNC might align with FANC coordinates
                 print("Note: BANC VNC coordinates may align with FANC")
                 print("Future: Check if neuron is in VNC region and use FANC coordinates")
                 return skeleton.copy()
@@ -330,12 +380,11 @@ def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="
         elif source_space == "FANC":
             if target_space in ["JRCVNC2018F", "JRCVNC2018U"]:
                 print(f"Using navis-flybrains transform: {source_space} -> {target_space}")
-                # This requires Elastix to be installed
                 try:
+                    import flybrains
                     points = skeleton.nodes[['x', 'y', 'z']].values
                     transformed_points = navis.xform_brain(points, source=source_space, target=target_space)
                     
-                    # Update skeleton coordinates
                     skeleton_copy = skeleton.copy()
                     skeleton_copy.nodes.loc[:, ['x', 'y', 'z']] = transformed_points
                     return skeleton_copy
@@ -349,6 +398,7 @@ def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="
         elif source_space in ["JRC2018F", "JRC2018M", "JRC2018U"] and target_space in ["JRC2018F", "JRC2018M", "JRC2018U"]:
             print(f"Using navis-flybrains transform: {source_space} -> {target_space}")
             try:
+                import flybrains
                 points = skeleton.nodes[['x', 'y', 'z']].values
                 transformed_points = navis.xform_brain(points, source=source_space, target=target_space)
                 
@@ -365,11 +415,8 @@ def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="
             print("Available template spaces in navis-flybrains:")
             print("Brain: FAFB14, FLYWIRE, JRC2018F, JRC2018M, JRC2018U, JRCFIB2018F")
             print("VNC: FANC, JRCVNC2018F, JRCVNC2018M, JRCVNC2018U")
+            print("BANC: Use official BANC transformation functions")
             return skeleton.copy()
-    
-    except ImportError:
-        print("navis-flybrains not available, using identity transform")
-        return skeleton.copy()
     
     except Exception as e:
         print(f"Coordinate transformation error: {e}")
