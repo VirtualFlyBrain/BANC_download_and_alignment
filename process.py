@@ -278,38 +278,102 @@ def list_available_banc_neurons(limit=100):
 
 def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="VFB"):
     """
-    Transform skeleton coordinates from BANC space to VFB space.
+    Transform skeleton coordinates between different template spaces.
+    
+    Current implementation uses navis-flybrains when transforms are available,
+    with fallback to identity transform for BANC data until proper transforms
+    are integrated into navis-flybrains.
     
     Args:
-        skeleton (navis.TreeNeuron): Input skeleton in BANC coordinates
-        source_space (str): Source coordinate space
-        target_space (str): Target coordinate space
-        
+        skeleton: navis TreeNeuron object
+        source_space: Source coordinate space ('BANC', 'FANC', 'JRC2018F', etc.)
+        target_space: Target coordinate space ('VFB', 'JRC2018F', 'JRC2018U', etc.)
+    
     Returns:
-        navis.TreeNeuron: Skeleton in VFB coordinate space
+        Transformed skeleton
     """
-    print(f"Transforming coordinates for skeleton {skeleton.id}")
+    import navis
+    import numpy as np
     
-    # Create a copy to avoid modifying original
-    transformed = skeleton.copy()
-    
-    # Placeholder transformation (replace with actual BANC->VFB transform)
-    # This should be replaced with the real transformation matrix from BANC documentation
-    scale_factor = 0.8  # Example scaling
-    offset = np.array([100, 100, 50])  # Example offset
-    
-    # Apply transformation to the node coordinates
-    if hasattr(transformed, 'nodes') and 'x' in transformed.nodes.columns:
-        # Modify the underlying node DataFrame
-        transformed.nodes[['x', 'y', 'z']] = (
-            transformed.nodes[['x', 'y', 'z']].values * scale_factor + offset
-        )
+    try:
+        # Import flybrains for coordinate transformations
+        import flybrains
         
-        # Mark as transformed
-        transformed.name = f"{transformed.name}_VFB_transformed"
+        print(f"Transforming coordinates from {source_space} to {target_space}")
         
-    print(f"Applied transformation: scale={scale_factor}, offset={offset}")
-    return transformed
+        # Handle BANC-specific transformations
+        if source_space == "BANC":
+            if target_space in ["VFB", "JRC2018F", "JRC2018U"]:
+                print("Warning: BANC -> JRC2018 transforms not yet available in navis-flybrains")
+                print("The BANC team has created aligned templates (JRC2018F_aligned240721_to_BANC.ng)")
+                print("but transformation matrices are not yet publicly available.")
+                print("Using identity transform as placeholder.")
+                
+                # Future implementation when BANC transforms are available:
+                # if target_space == "JRC2018F":
+                #     # Use BANC brain -> JRC2018F brain transform
+                #     transformed = navis.xform_brain(skeleton, source='BANC_brain', target='JRC2018F')
+                # elif target_space == "JRC2018U":
+                #     # Chain transform: BANC -> JRC2018F -> JRC2018U
+                #     transformed = navis.xform_brain(skeleton, source='BANC', target='JRC2018U')
+                
+                # For now, return unchanged skeleton
+                return skeleton.copy()
+            
+            elif target_space == "FANC":
+                # BANC VNC might align with FANC coordinates
+                print("Note: BANC VNC coordinates may align with FANC")
+                print("Future: Check if neuron is in VNC region and use FANC coordinates")
+                return skeleton.copy()
+                
+        # Handle FANC transformations (these work with navis-flybrains)
+        elif source_space == "FANC":
+            if target_space in ["JRCVNC2018F", "JRCVNC2018U"]:
+                print(f"Using navis-flybrains transform: {source_space} -> {target_space}")
+                # This requires Elastix to be installed
+                try:
+                    points = skeleton.nodes[['x', 'y', 'z']].values
+                    transformed_points = navis.xform_brain(points, source=source_space, target=target_space)
+                    
+                    # Update skeleton coordinates
+                    skeleton_copy = skeleton.copy()
+                    skeleton_copy.nodes.loc[:, ['x', 'y', 'z']] = transformed_points
+                    return skeleton_copy
+                    
+                except Exception as e:
+                    print(f"Transform failed: {e}")
+                    print("Note: FANC transforms require Elastix to be installed")
+                    return skeleton.copy()
+        
+        # Handle standard JRC template transformations
+        elif source_space in ["JRC2018F", "JRC2018M", "JRC2018U"] and target_space in ["JRC2018F", "JRC2018M", "JRC2018U"]:
+            print(f"Using navis-flybrains transform: {source_space} -> {target_space}")
+            try:
+                points = skeleton.nodes[['x', 'y', 'z']].values
+                transformed_points = navis.xform_brain(points, source=source_space, target=target_space)
+                
+                skeleton_copy = skeleton.copy()
+                skeleton_copy.nodes.loc[:, ['x', 'y', 'z']] = transformed_points
+                return skeleton_copy
+                
+            except Exception as e:
+                print(f"Transform failed: {e}")
+                return skeleton.copy()
+        
+        else:
+            print(f"No transform available from {source_space} to {target_space}")
+            print("Available template spaces in navis-flybrains:")
+            print("Brain: FAFB14, FLYWIRE, JRC2018F, JRC2018M, JRC2018U, JRCFIB2018F")
+            print("VNC: FANC, JRCVNC2018F, JRCVNC2018M, JRCVNC2018U")
+            return skeleton.copy()
+    
+    except ImportError:
+        print("navis-flybrains not available, using identity transform")
+        return skeleton.copy()
+    
+    except Exception as e:
+        print(f"Coordinate transformation error: {e}")
+        return skeleton.copy()
 
 
 def create_vfb_file(skeleton, output_path, neuron_id, metadata=None, formats=['swc', 'json']):
