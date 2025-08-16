@@ -43,17 +43,18 @@ def setup_environment():
     os.environ['max_workers'] = '1'
 
 
-def process_neuron(neuron, output_dir, verbose=True):
+def process_neuron(neuron, output_dir, formats=['swc', 'json'], verbose=True):
     """
     Process a single BANC neuron through the complete pipeline.
     
     Args:
-        neuron: Dictionary with neuron information (id, name, status)
-        output_dir: Directory to save output files
-        verbose: Whether to print detailed progress
-    
+        neuron (dict): Neuron information with id, name, status
+        output_dir (str): Output directory for processed files
+        formats (list): List of output formats to create
+        verbose (bool): Whether to print detailed progress
+        
     Returns:
-        Dictionary with processing results
+        dict: Processing results with success status and file paths
     """
     neuron_id = neuron['id']
     result = {
@@ -104,7 +105,7 @@ def process_neuron(neuron, output_dir, verbose=True):
         
         # Step 3: Create output files
         if verbose:
-            print("\n3. Creating output files...")
+            print(f"\n3. Creating output files (formats: {', '.join(formats)})...")
         
         # Ensure output directory exists
         os.makedirs(output_dir, exist_ok=True)
@@ -120,30 +121,19 @@ def process_neuron(neuron, output_dir, verbose=True):
             'method': 'pcg_skel_with_fallback'
         }
         
-        # Create SWC file
-        swc_path = os.path.join(output_dir, f"{neuron_id}.swc")
-        swc_success = create_vfb_file(transformed, swc_path, neuron_id, metadata)
+        # Create files in specified formats
+        output_base = os.path.join(output_dir, neuron_id)
+        success, created_files = create_vfb_file(transformed, output_base, neuron_id, metadata, formats)
         
-        if swc_success:
-            result['files_created'].append(swc_path)
-            if verbose:
-                print(f"   ✓ SWC file created: {swc_path}")
-        
-        # Create JSON file
-        json_path = os.path.join(output_dir, f"{neuron_id}.json")
-        json_success = create_vfb_file(transformed, json_path, neuron_id, metadata)
-        
-        if json_success:
-            result['files_created'].append(json_path)
-            if verbose:
-                print(f"   ✓ JSON file created: {json_path}")
-        
-        if swc_success and json_success:
+        if success:
+            result['files_created'] = created_files
             result['success'] = True
             if verbose:
+                for file_path in created_files:
+                    print(f"   ✓ File created: {file_path}")
                 print("\n   ✓ Processing completed successfully!")
         else:
-            result['errors'].append("File creation partially failed")
+            result['errors'].append("File creation failed")
             
     except Exception as e:
         error_msg = f"Unexpected error: {str(e)}"
@@ -163,7 +153,8 @@ def main():
 Examples:
     python run_banc_pipeline.py --limit 5
     python run_banc_pipeline.py --output-dir /path/to/output --limit 10
-    python run_banc_pipeline.py --no-verbose
+    python run_banc_pipeline.py --formats swc,json,obj,nrrd --limit 3
+    python run_banc_pipeline.py --formats obj,nrrd --no-verbose
         """
     )
     
@@ -182,6 +173,13 @@ Examples:
     )
     
     parser.add_argument(
+        '--formats',
+        type=str,
+        default='swc,json',
+        help='Output formats (comma-separated): swc,json,obj,nrrd (default: swc,json)'
+    )
+    
+    parser.add_argument(
         '--no-verbose', 
         action='store_true',
         help='Suppress detailed output'
@@ -190,11 +188,22 @@ Examples:
     args = parser.parse_args()
     verbose = not args.no_verbose
     
+    # Parse formats
+    formats = [fmt.strip() for fmt in args.formats.split(',')]
+    valid_formats = ['swc', 'json', 'obj', 'nrrd']
+    invalid_formats = [fmt for fmt in formats if fmt not in valid_formats]
+    
+    if invalid_formats:
+        print(f"Error: Invalid format(s): {', '.join(invalid_formats)}")
+        print(f"Valid formats are: {', '.join(valid_formats)}")
+        sys.exit(1)
+    
     if verbose:
         print("BANC to VFB Processing Pipeline")
         print("="*50)
         print(f"Limit: {args.limit} neurons")
         print(f"Output directory: {args.output_dir}")
+        print(f"Output formats: {', '.join(formats)}")
         print("="*50)
     
     # Set up environment
@@ -221,7 +230,7 @@ Examples:
         if verbose:
             print(f"\n[{i}/{len(neurons)}] Processing {neuron['id']}...")
         
-        result = process_neuron(neuron, args.output_dir, verbose)
+        result = process_neuron(neuron, args.output_dir, formats, verbose)
         results.append(result)
         
         if result['success']:
