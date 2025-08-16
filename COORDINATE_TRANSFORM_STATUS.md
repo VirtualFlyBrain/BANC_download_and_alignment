@@ -1,6 +1,68 @@
-## BANC Coordinate Transformation Status
+# BANC Coordinate Transformation Status
 
-### Current Situation (August 2025)
+## ✅ SOLUTION FOUND: Official BANC Transformations
+
+The BANC team has created official coordinate transformation functions in their repository:
+**https://github.com/jasper-tms/the-BANC-fly-connectome**
+
+### Key Transformation Functions
+
+Located in `fanc/transforms/template_alignment.py`:
+
+1. **`warp_points_BANC_to_template(points, brain_or_vnc='brain')`**
+   - Transforms BANC coordinates to JRC2018F (brain) or JRCVNC2018F (VNC)
+   - Handles both brain and VNC regions automatically
+   - Supports multiple units: nanometers, microns, voxels
+
+2. **`warp_points_BANC_to_brain_template()`** - Specific brain transform
+3. **`warp_points_BANC_to_vnc_template()`** - Specific VNC transform  
+4. **`warp_points_template_to_BANC()`** - Reverse transformation
+
+### Implementation Status
+
+✅ **Integrated into Pipeline**: The `transform_skeleton_coordinates()` function now:
+- Automatically detects brain vs VNC neurons based on y-coordinates
+- Uses appropriate BANC→JRC2018F or BANC→JRCVNC2018F transforms
+- Chains to JRC2018U for VFB compatibility when needed
+- Gracefully falls back if dependencies not installed
+
+### Dependencies Required
+
+1. **BANC Package**: `git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git`
+2. **pytransformix**: `pip install git+https://github.com/jasper-tms/pytransformix.git`
+3. **Elastix binary**: Must be installed and in PATH
+   - macOS: `brew install elastix`
+   - Linux: `apt-get install elastix`
+   - Windows: Download from https://elastix.lumc.nl/
+
+### Installation
+
+Run the automated setup:
+```bash
+./install_banc_transforms.sh
+```
+
+### Transform Details
+
+- **Source**: BANC native space (4,4,45nm voxels)
+- **Brain Target**: JRC2018F template (0.519 μm isotropic)
+- **VNC Target**: JRCVNC2018F template
+- **Method**: Elastix-based registration with affine + B-spline refinement
+- **Registration Quality**: Manual landmark-based initialization + automatic refinement
+
+### Region Detection
+
+The pipeline automatically determines brain vs VNC based on coordinates:
+- **Brain**: y-coordinate < 320,000 nm → JRC2018F transform
+- **VNC**: y-coordinate ≥ 320,000 nm → JRCVNC2018F transform
+
+### Production Ready
+
+The pipeline is now **production-ready** with proper coordinate transformations:
+- Real BANC public data access via Google Cloud
+- Official BANC coordinate transformations
+- Multi-format output (SWC, OBJ, NRRD)
+- VFB-compatible template spaces
 
 #### What We Found:
 1. **BANC Public Data Available**: The BANC team has released comprehensive public data at `gs://lee-lab_brain-and-nerve-cord-fly-connectome/`
