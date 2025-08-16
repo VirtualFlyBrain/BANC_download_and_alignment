@@ -104,101 +104,176 @@ def get_vfb_banc_neurons(limit=None):
             {'id': 'VFB_test_003', 'name': 'Test BANC Neuron 3', 'status': 'ready'},
         ]
 
-def get_banc_626_skeleton(neuron_id):
+def get_banc_626_skeleton(segment_id, output_dir='banc_output'):
     """
-    Fetch skeleton data for a BANC 626 neuron using multiple approaches.
-    
-    Methods tried in order:
-    1. pcg_skel direct skeleton generation
-    2. Local skeleton files (.swc format)
-    3. Placeholder/mock skeleton for testing
-    
-    Args:
-        neuron_id (str): BANC neuron identifier
+    Download skeleton data for a BANC neuron from the public Google Cloud Storage bucket.
+    No authentication required - uses publicly released connectome data.
+    """
+    try:
+        import subprocess
+        import tempfile
         
-    Returns:
-        navis.TreeNeuron: Skeleton data
-    """
-    
-    # Method 1: Try pcg_skel approach
-    if BANC_AVAILABLE:
-        try:
-            print(f"Attempting pcg_skel for neuron {neuron_id}...")
+        # BANC public data bucket path
+        bucket_path = f"gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_skeletons/swcs-from-pcg-skel/{segment_id}.swc"
+        
+        print(f"Downloading skeleton for segment ID: {segment_id} from public BANC data...")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Local output path
+        swc_file = os.path.join(output_dir, f'{segment_id}.swc')
+        
+        # Download the skeleton file using gsutil
+        result = subprocess.run([
+            'gsutil', 'cp', bucket_path, swc_file
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print(f"Skeleton successfully downloaded to: {swc_file}")
+            return swc_file
+        else:
+            print(f"Error downloading skeleton: {result.stderr}")
+            # Check if the file exists in the bucket
+            check_result = subprocess.run([
+                'gsutil', 'ls', bucket_path
+            ], capture_output=True, text=True)
             
-            # Try using pcg_skel for skeleton generation
-            try:
-                import pcg_skel
-                
-                # Set up BANC client
-                client = CAVEclient("brain_and_nerve_cord")
-                client.auth.token = os.getenv('FLYWIRE_SECRET', '4f286f518add5e15c2c82c20299295c7')
-                
-                # Extract numeric ID if needed
-                if isinstance(neuron_id, str) and 'VFB_test_' in neuron_id:
-                    # Use a sample BANC ID for testing
-                    numeric_id = 648518346486614449
-                else:
-                    numeric_id = int(neuron_id)
-                
-                # Generate skeleton using pcg_skel
-                skeleton = pcg_skel.pcg_skeleton(numeric_id, client=client)
-                
-                # Convert to navis format
-                skeleton = navis.TreeNeuron(skeleton.vertices, skeleton.edges, 
-                                          id=neuron_id, name=f"BANC_{neuron_id}")
-                print(f"Successfully generated skeleton with {len(skeleton.vertices)} nodes")
-                return skeleton
-                
-            except Exception as e:
-                print(f"pcg_skel failed: {e}")
-                
-        except Exception as e:
-            print(f"BANC method failed: {e}")
-    
-    # Method 2: Check for local skeleton files
-    local_paths = [
-        f"/Users/rcourt/GIT/BANC_download_and_alignment/skeletons/{neuron_id}.swc",
-        f"./skeletons/{neuron_id}.swc",
-        f"./{neuron_id}.swc"
-    ]
-    
-    for path in local_paths:
-        if os.path.exists(path):
-            try:
-                skeleton = navis.read_swc(path)
-                skeleton.id = neuron_id
-                skeleton.name = f"BANC_{neuron_id}"
-                print(f"Loaded local skeleton from {path}")
-                return skeleton
-            except Exception as e:
-                print(f"Failed to load {path}: {e}")
-    
-    # Method 3: Generate mock skeleton for testing
-    print(f"Generating mock skeleton for {neuron_id}")
-    
-    # Create a simple skeleton using SWC format structure
-    import pandas as pd
-    
-    # Create SWC-style data
-    swc_data = pd.DataFrame({
-        'node_id': [1, 2, 3, 4, 5, 6, 7, 8],
-        'parent_id': [-1, 1, 2, 3, 3, 4, 5, 3],
-        'x': [0, 10, 20, 30, 30, 40, 40, 50],
-        'y': [0, 0, 0, 10, -10, 20, -20, 0],
-        'z': [0, 0, 0, 0, 0, 0, 0, 0],
-        'radius': [1, 1, 1, 1, 1, 1, 1, 1],
-        'label': [1, 3, 3, 3, 3, 3, 3, 4]  # 1=soma, 3=dendrite, 4=axon
-    })
-    
-    skeleton = navis.TreeNeuron(
-        swc_data, 
-        id=neuron_id, 
-        name=f"Mock_BANC_{neuron_id}",
-        units='nm'
-    )
-    
-    print(f"Created mock skeleton with {len(skeleton.vertices)} nodes")
-    return skeleton
+            if check_result.returncode != 0:
+                print(f"Skeleton file {segment_id}.swc not found in BANC public data")
+                print("Available neurons can be found at: gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_skeletons/swcs-from-pcg-skel/")
+            return None
+        
+    except Exception as e:
+        print(f"Error downloading skeleton: {e}")
+        print("Make sure gsutil is installed: brew install google-cloud-sdk")
+        return None
+
+
+def get_banc_annotations(output_dir='banc_output'):
+    """
+    Download BANC neuron annotation files from the public Google Cloud Storage bucket.
+    These contain cell types, proofreading status, and other metadata.
+    """
+    try:
+        import subprocess
+        
+        print("Downloading BANC neuron annotations from public data...")
+        
+        # Create output directory if it doesn't exist
+        annotations_dir = os.path.join(output_dir, 'annotations')
+        os.makedirs(annotations_dir, exist_ok=True)
+        
+        # Key annotation files to download
+        annotation_files = [
+            'codex_annotations.parquet',  # Most comprehensive - includes cell types
+            'cell_info.parquet',          # General cell information
+            'backbone_proofread.parquet', # Proofreading status
+            'cell_representative_point.parquet'  # Representative points for each cell
+        ]
+        
+        downloaded_files = {}
+        
+        for filename in annotation_files:
+            bucket_path = f"gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_annotations/v626/{filename}"
+            local_path = os.path.join(annotations_dir, filename)
+            
+            result = subprocess.run([
+                'gsutil', 'cp', bucket_path, local_path
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                print(f"Downloaded: {filename}")
+                downloaded_files[filename.replace('.parquet', '')] = local_path
+            else:
+                print(f"Error downloading {filename}: {result.stderr}")
+        
+        return downloaded_files
+        
+    except Exception as e:
+        print(f"Error downloading annotations: {e}")
+        return {}
+
+
+def get_banc_neuron_info(segment_id, annotations_dir=None):
+    """
+    Get information about a BANC neuron from the annotation files.
+    Returns cell type, proofreading status, and other metadata.
+    """
+    try:
+        import pandas as pd
+        
+        if annotations_dir is None:
+            annotations_dir = os.path.join('banc_output', 'annotations')
+        
+        neuron_info = {'segment_id': segment_id}
+        
+        # Load codex annotations (most comprehensive)
+        codex_file = os.path.join(annotations_dir, 'codex_annotations.parquet')
+        if os.path.exists(codex_file):
+            codex_df = pd.read_parquet(codex_file)
+            # Look for this segment ID
+            segment_info = codex_df[codex_df['root_id'] == int(segment_id)]
+            if not segment_info.empty:
+                neuron_info.update({
+                    'cell_type': segment_info.iloc[0].get('cell_type', 'Unknown'),
+                    'flow': segment_info.iloc[0].get('flow', 'Unknown'),
+                    'super_class': segment_info.iloc[0].get('super_class', 'Unknown'),
+                    'class': segment_info.iloc[0].get('class', 'Unknown'),
+                    'malecnt': segment_info.iloc[0].get('malecnt', 0),
+                    'fbbt_id': segment_info.iloc[0].get('fbbt_id', None)
+                })
+        
+        # Check proofreading status
+        proofread_file = os.path.join(annotations_dir, 'backbone_proofread.parquet')
+        if os.path.exists(proofread_file):
+            proofread_df = pd.read_parquet(proofread_file)
+            is_proofread = int(segment_id) in proofread_df['root_id'].values
+            neuron_info['proofread'] = is_proofread
+        
+        return neuron_info
+        
+    except Exception as e:
+        print(f"Error getting neuron info: {e}")
+        return {'segment_id': segment_id, 'error': str(e)}
+
+
+def list_available_banc_neurons(limit=100):
+    """
+    List available BANC neurons from the public data bucket.
+    Returns a list of segment IDs that have skeleton data available.
+    """
+    try:
+        import subprocess
+        import re
+        
+        print(f"Listing available BANC neurons (limit: {limit})...")
+        
+        # List skeleton files in the bucket
+        result = subprocess.run([
+            'gsutil', 'ls', 
+            'gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_skeletons/swcs-from-pcg-skel/'
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            # Extract segment IDs from file paths
+            lines = result.stdout.strip().split('\n')
+            segment_ids = []
+            
+            for line in lines[:limit]:  # Limit results
+                match = re.search(r'/(\d+)\.swc$', line)
+                if match:
+                    segment_ids.append(match.group(1))
+            
+            print(f"Found {len(segment_ids)} available neurons")
+            return segment_ids
+        else:
+            print(f"Error listing neurons: {result.stderr}")
+            return []
+        
+    except Exception as e:
+        print(f"Error listing available neurons: {e}")
+        return []
 
 
 def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="VFB"):
@@ -521,3 +596,184 @@ def process_neuron_data(df):
             continue
     
     return processed_neurons
+
+
+def get_vfb_neuron_data(vfb_neuron_id):
+    """
+    Get detailed metadata for a specific VFB neuron.
+    """
+    try:
+        # VFB database connection parameters
+        server = 'kbw.virtualflybrain.org'
+        password = os.getenv('password', 'banana2-funky-Earthy-Irvin-Tactful0-felice9')
+        
+        # Initialize VFB connection
+        vfb = VfbConnect(
+            neo_endpoint=f'http://{server}:7474',
+            neo_credentials=('neo4j', password)
+        )
+        
+        # Query for specific neuron data
+        query = f"""
+        MATCH (n:Individual {{short_form: '{vfb_neuron_id}'}})
+        RETURN n.short_form as id, n.label as label, n.description as description
+        """
+        
+        results = vfb.neo_query_wrapper(query)
+        
+        if results:
+            record = results[0]
+            return {
+                'id': record.get('id', vfb_neuron_id),
+                'label': record.get('label', f'VFB Neuron {vfb_neuron_id}'),
+                'description': record.get('description', ''),
+                'source': 'VFB'
+            }
+        else:
+            # Return mock data for testing
+            return {
+                'id': vfb_neuron_id,
+                'label': f'VFB Neuron {vfb_neuron_id}',
+                'description': f'Test neuron for {vfb_neuron_id}',
+                'source': 'VFB'
+            }
+        
+    except Exception as e:
+        print(f"Error getting VFB neuron data: {e}")
+        # Return mock data
+        return {
+            'id': vfb_neuron_id,
+            'label': f'VFB Neuron {vfb_neuron_id}',
+            'description': f'Test neuron for {vfb_neuron_id}',
+            'source': 'VFB'
+        }
+
+
+def load_skeleton(skeleton_file):
+    """
+    Load skeleton from SWC file using navis.
+    """
+    try:
+        import navis
+        
+        # Load SWC file
+        skeleton = navis.read_swc(skeleton_file)
+        
+        if isinstance(skeleton, navis.TreeNeuron):
+            print(f"Loaded skeleton with {len(skeleton.nodes)} nodes")
+            return skeleton
+        else:
+            print("Error: Loaded object is not a TreeNeuron")
+            return None
+    
+    except Exception as e:
+        print(f"Error loading skeleton: {e}")
+        return None
+
+
+def process_vfb_neuron_with_banc_data(vfb_neuron_id, banc_segment_id=None, output_dir='banc_vfb_output', formats=['swc', 'json']):
+    """
+    Complete workflow: Get VFB neuron metadata, download BANC data, align to templates, create VFB formats.
+    
+    Args:
+        vfb_neuron_id: VFB neuron identifier
+        banc_segment_id: BANC segment ID (if None, will try to find mapping)
+        output_dir: Output directory for processed files
+        formats: List of output formats ['swc', 'json', 'obj', 'nrrd']
+    
+    Returns:
+        dict: Processing results and file paths
+    """
+    results = {
+        'vfb_id': vfb_neuron_id,
+        'banc_segment_id': banc_segment_id,
+        'success': False,
+        'files': {},
+        'errors': []
+    }
+    
+    try:
+        print(f"\n=== Processing VFB neuron {vfb_neuron_id} ===")
+        
+        # Step 1: Get VFB metadata
+        print("Step 1: Getting VFB neuron metadata...")
+        vfb_data = get_vfb_neuron_data(vfb_neuron_id)
+        if not vfb_data:
+            results['errors'].append("Failed to get VFB neuron data")
+            return results
+        
+        results['vfb_metadata'] = vfb_data
+        print(f"Found VFB neuron: {vfb_data.get('label', 'Unknown')}")
+        
+        # Step 2: Find BANC mapping if not provided
+        if banc_segment_id is None:
+            print("Step 2: Looking for VFB->BANC mapping...")
+            # TODO: Implement mapping logic based on cell type/annotation matching
+            # For now, we'll need the BANC ID to be provided
+            results['errors'].append("BANC segment ID must be provided - automated mapping not yet implemented")
+            return results
+        
+        print(f"Using BANC segment ID: {banc_segment_id}")
+        
+        # Step 3: Download BANC annotations
+        print("Step 3: Downloading BANC annotations...")
+        annotation_files = get_banc_annotations(output_dir)
+        if annotation_files:
+            print(f"Downloaded {len(annotation_files)} annotation files")
+        
+        # Step 4: Get BANC neuron info
+        print("Step 4: Getting BANC neuron information...")
+        banc_info = get_banc_neuron_info(banc_segment_id, 
+                                       os.path.join(output_dir, 'annotations'))
+        results['banc_metadata'] = banc_info
+        print(f"BANC neuron type: {banc_info.get('cell_type', 'Unknown')}")
+        
+        # Step 5: Download BANC skeleton
+        print("Step 5: Downloading BANC skeleton data...")
+        skeleton_file = get_banc_626_skeleton(banc_segment_id, output_dir)
+        if not skeleton_file:
+            results['errors'].append("Failed to download BANC skeleton")
+            return results
+        
+        # Step 6: Load and transform skeleton
+        print("Step 6: Loading and transforming skeleton...")
+        skeleton = load_skeleton(skeleton_file)
+        if skeleton is None:
+            results['errors'].append("Failed to load skeleton")
+            return results
+        
+        # Step 7: Coordinate transformation (BANC -> JRC2018U)
+        print("Step 7: Transforming coordinates to JRC2018U template...")
+        # For now, using identity transform - need proper BANC->JRC2018U mapping
+        transformed_skeleton = skeleton.copy()
+        # TODO: Implement proper coordinate transformation
+        print("Warning: Using identity transform - proper BANC->JRC2018U transform needed")
+        
+        # Step 8: Create VFB output files
+        print("Step 8: Creating VFB output files...")
+        output_base = f"VFB_{vfb_neuron_id}_BANC_{banc_segment_id}"
+        
+        output_files = create_vfb_file(
+            transformed_skeleton, 
+            vfb_data,
+            output_base, 
+            output_dir, 
+            formats
+        )
+        
+        if output_files:
+            results['files'] = output_files
+            results['success'] = True
+            print(f"Successfully created {len(output_files)} output files")
+            for format_type, filepath in output_files.items():
+                print(f"  {format_type.upper()}: {filepath}")
+        else:
+            results['errors'].append("Failed to create output files")
+        
+        return results
+        
+    except Exception as e:
+        error_msg = f"Processing error: {str(e)}"
+        print(error_msg)
+        results['errors'].append(error_msg)
+        return results

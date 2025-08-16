@@ -43,105 +43,50 @@ def setup_environment():
     os.environ['max_workers'] = '1'
 
 
-def process_neuron(neuron, output_dir, formats=['swc', 'json'], verbose=True):
+def process_neuron(neuron_id, formats=['swc', 'json'], output_dir='banc_vfb_output'):
     """
-    Process a single BANC neuron through the complete pipeline.
+    Process a single neuron through the BANC->VFB pipeline with real public data.
     
     Args:
-        neuron (dict): Neuron information with id, name, status
-        output_dir (str): Output directory for processed files
-        formats (list): List of output formats to create
-        verbose (bool): Whether to print detailed progress
-        
+        neuron_id: Either VFB ID or BANC segment ID 
+        formats: List of output formats to generate
+        output_dir: Output directory for processed files
+    
     Returns:
-        dict: Processing results with success status and file paths
+        dict: Processing results
     """
-    neuron_id = neuron['id']
-    result = {
-        'neuron_id': neuron_id,
-        'name': neuron['name'],
-        'success': False,
-        'skeleton_generated': False,
-        'coordinates_transformed': False,
-        'files_created': [],
-        'errors': []
-    }
-    
     try:
-        if verbose:
-            print(f"\n{'='*50}")
-            print(f"Processing neuron: {neuron_id}")
-            print(f"Name: {neuron['name']}")
-            print(f"Status: {neuron['status']}")
-            print(f"{'='*50}")
+        from process import process_vfb_neuron_with_banc_data, list_available_banc_neurons
         
-        # Step 1: Generate skeleton
-        if verbose:
-            print("\n1. Generating skeleton...")
-        
-        skeleton = get_banc_626_skeleton(neuron_id)
-        
-        if skeleton is None:
-            result['errors'].append("Failed to generate skeleton")
-            return result
-        
-        result['skeleton_generated'] = True
-        if verbose:
-            print(f"   ✓ Skeleton generated with {len(skeleton.nodes)} nodes")
-        
-        # Step 2: Transform coordinates  
-        if verbose:
-            print("\n2. Transforming coordinates...")
-        
-        transformed = transform_skeleton_coordinates(skeleton)
-        
-        if transformed is None:
-            result['errors'].append("Failed to transform coordinates")
-            return result
-        
-        result['coordinates_transformed'] = True
-        if verbose:
-            print("   ✓ Coordinates transformed to VFB space")
-        
-        # Step 3: Create output files
-        if verbose:
-            print(f"\n3. Creating output files (formats: {', '.join(formats)})...")
-        
-        # Ensure output directory exists
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Prepare metadata
-        metadata = {
-            'source': 'BANC_626',
-            'vfb_id': neuron_id,
-            'name': neuron['name'],
-            'status': neuron['status'],
-            'processing_date': datetime.now().isoformat(),
-            'pipeline_version': '1.0',
-            'method': 'pcg_skel_with_fallback'
-        }
-        
-        # Create files in specified formats
-        output_base = os.path.join(output_dir, neuron_id)
-        success, created_files = create_vfb_file(transformed, output_base, neuron_id, metadata, formats)
-        
-        if success:
-            result['files_created'] = created_files
-            result['success'] = True
-            if verbose:
-                for file_path in created_files:
-                    print(f"   ✓ File created: {file_path}")
-                print("\n   ✓ Processing completed successfully!")
-        else:
-            result['errors'].append("File creation failed")
+        # Check if this looks like a BANC segment ID (all digits)
+        if neuron_id.isdigit():
+            print(f"Processing BANC segment ID: {neuron_id}")
             
+            # For BANC IDs, create a VFB test ID and use the BANC ID directly
+            vfb_id = f"VFB_BANC_{neuron_id}"
+            banc_id = neuron_id
+            
+        else:
+            print(f"Processing VFB neuron ID: {neuron_id}")
+            vfb_id = neuron_id
+            banc_id = None  # Will need to be provided or mapped
+        
+        # Process with the new comprehensive function
+        results = process_vfb_neuron_with_banc_data(
+            vfb_neuron_id=vfb_id,
+            banc_segment_id=banc_id,
+            output_dir=output_dir,
+            formats=formats
+        )
+        
+        return results
+        
+    except ImportError as e:
+        print(f"Import error: {e}")
+        return {'success': False, 'error': 'Failed to import processing functions'}
     except Exception as e:
-        error_msg = f"Unexpected error: {str(e)}"
-        result['errors'].append(error_msg)
-        if verbose:
-            print(f"\n   ✗ Error: {error_msg}")
-    
-    return result
+        print(f"Error processing neuron {neuron_id}: {e}")
+        return {'success': False, 'error': str(e)}
 
 
 def main():
