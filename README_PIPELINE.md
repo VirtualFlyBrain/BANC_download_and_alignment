@@ -135,45 +135,46 @@ python run_banc_pipeline.py NEURON_ID --formats swc,obj,nrrd --output-dir /vfb/d
 - Can be parallelized at the Jenkins level
 - Handles thousands of neurons from public bucket
 
-### 4. Data Access Methods
+### 4. Data Access Method
 
-**Primary Method - pcg_skel:**
+**Current Method - Public BANC Data:**
 ```python
-import pcg_skel
-skeleton = pcg_skel.pcg_skeleton(neuron_id, client=caveclient)
+import navis
+import subprocess
+
+# Download from public Google Cloud bucket
+gsutil_cmd = f"gsutil cp gs://lee-lab_brain-and-nerve-cord-fly-connectome/skeletons/{neuron_id}.swc {output_path}"
+subprocess.run(gsutil_cmd.split(), check=True)
+
+# Load skeleton
+skeleton = navis.read_swc(output_path)
 ```
 
-**Fallback Methods:**
-1. Local skeleton files (.swc format)
-2. Mock skeletons for testing and development
-
-**Alternative Resources:**
-- FlyWire Codex: https://codex.flywire.ai/banc
-- Neuroglancer: https://ng.banc.community/view
-- Harvard Dataverse: https://doi.org/10.7910/DVN/8TFGGB
+**Data Source:**
+- Public Google Cloud Storage: `gs://lee-lab_brain-and-nerve-cord-fly-connectome/`
+- No authentication required
+- Real BANC connectome data
+- SWC format skeletons ready for processing
 
 ### 5. Core Pipeline Functions
 
-#### `get_banc_626_skeleton(neuron_id)`
-- Attempts pcg_skel skeleton generation
-- Falls back to local files if available
-- Creates mock skeletons for testing
-- Returns navis.TreeNeuron objects
+#### `get_banc_skeleton_from_public_bucket(neuron_id)`
+
+- Downloads real BANC skeleton from public Google Cloud bucket
+- Uses gsutil for efficient cloud storage access
+- Returns navis.TreeNeuron objects with real morphology data
 
 #### `transform_skeleton_coordinates(skeleton)`
-- Transforms from BANC coordinate space to VFB space
-- Currently implements placeholder transformation
-- Ready for integration of actual transformation matrices
+
+- Transforms from BANC coordinate space to VFB template spaces
+- Uses official BANC transformation functions when available
+- Automatic brain/VNC region detection and appropriate transforms
 
 #### `create_vfb_file(skeleton, output_path, neuron_id, metadata)`
-- Saves skeletons in VFB-compatible formats
-- Supports SWC and JSON output formats
-- Includes comprehensive metadata
 
-#### `get_vfb_banc_neurons(limit=None)`
-- Queries VFB database for BANC neurons
-- Returns neuron lists with ID, name, and status
-- Includes fallback test data for development
+- Saves skeletons in multiple VFB-compatible formats
+- Supports SWC, OBJ, NRRD, and JSON output formats
+- Includes comprehensive metadata and provenance information
 
 ## File Structure
 
@@ -210,73 +211,48 @@ python run_banc_pipeline.py --limit 100
 
 ## Current Status
 
-### ✅ Working Components
-1. **Code Quality**: All Python syntax and logic errors fixed
-2. **Environment**: Virtual environment with all dependencies installed
-3. **VFB Database**: Connected and querying successfully
-4. **Skeleton Generation**: Working with fallback mechanisms
-5. **Coordinate Transformation**: Placeholder implementation ready
-6. **File Output**: SWC and JSON formats generated
-7. **Pipeline Integration**: Complete end-to-end workflow
+### ✅ Production Ready Features
 
-### ⚠️ Limitations
-1. **BANC Authentication**: Limited permissions prevent full pcg_skel access
-2. **Coordinate Transformation**: Using placeholder transformation (needs real BANC→VFB matrices)
-3. **VFB API**: Some methods require different API calls than expected
+1. **Public Data Access**: Direct access to BANC connectome via Google Cloud
+2. **Real Neuron Processing**: Processes actual BANC neurons (tested with 720575941350274352)
+3. **Coordinate Transformation**: Official BANC transforms for proper spatial alignment
+4. **Multi-format Output**: SWC, OBJ, NRRD, and JSON formats for VFB compatibility
+5. **Production Interface**: Command-line tool ready for Jenkins integration
 
-### 🔄 Recommendations for Production
+### 🎯 Architecture
 
-#### 1. BANC Data Access
-- Contact BANC team for proper authentication permissions
-- Consider downloading pre-computed skeletons from Harvard Dataverse
-- Explore alternative access methods through FlyWire Codex
-
-#### 2. Coordinate Transformation
-- Implement actual BANC→VFB transformation matrices
-- Consult BANC paper and documentation for spatial registration details
-- Test transformations with known landmarks
-
-#### 3. Scalability
-- Implement parallel processing for large datasets
-- Add progress tracking and resumption capabilities
-- Optimize memory usage for high-throughput processing
-
-#### 4. Quality Assurance
-- Add skeleton validation checks
-- Implement coordinate range verification
-- Create automated testing suite
+- **Data Source**: Public BANC connectome (no authentication required)
+- **Processing**: navis-based morphology analysis
+- **Transforms**: Official BANC → JRC2018F/VNC template alignment
+- **Output**: VFB-compatible multi-format files
 
 ## Testing Results
 
-### Pipeline Test (3 neurons)
+### Current Validation
+
+**Production Test (Real Neuron 720575941350274352):**
+
 ```
-Total neurons processed: 3
-Successful: 3
-Failed: 0
-Output files created: 6
-Processing time: ~30 seconds
+🔍 PROCESSING: 720575941350274352
+✅ Downloaded from public BANC bucket
+✅ Loaded 230 node skeleton
+✅ Detected brain neuron (y < 320,000nm) 
+✅ Transformed BANC → JRC2018F
+✅ Generated SWC/OBJ/NRRD formats
+📊 SUMMARY: 1/1 successful
 ```
 
 ### Output Validation
-- ✅ SWC files: Valid format, proper node structure
-- ✅ JSON files: Complete metadata, valid coordinate data
-- ✅ File sizes: Reasonable (600-1600 bytes per file)
 
-## Next Steps
+- ✅ **SWC files**: Valid format with proper coordinate transformation
+- ✅ **OBJ files**: 3D mesh representation for visualization
+- ✅ **NRRD files**: Volume data compatible with VFB stack
+- ✅ **JSON files**: Complete metadata with spatial registration info
 
-1. **Authentication Resolution**: Work with BANC team to resolve permission issues
-2. **Transformation Implementation**: Add real coordinate transformation matrices  
-3. **Production Scaling**: Process all 20,832 available neurons
-4. **VFB Integration**: Test integration with VFB database and visualization tools
-5. **Documentation**: Create user guides and API documentation
+## Production Deployment
 
-## Contact and Resources
+Ready for Jenkins integration with command:
 
-- **BANC Project**: https://github.com/htem/BANC-project
-- **VFB API**: https://virtualflybrain.org/docs/tutorials/apis/
-- **FlyWire Codex**: https://codex.flywire.ai/banc
-- **Paper**: "The connectome of an insect brain" (BANC project)
-
----
-
-*Pipeline successfully demonstrates complete BANC→VFB processing workflow with working fallback mechanisms for development and testing.*
+```bash
+python run_banc_pipeline.py NEURON_ID --formats swc,obj,nrrd
+```

@@ -16,6 +16,7 @@ Examples:
 import argparse
 import os
 import sys
+import numpy as np
 from process import (
     get_banc_626_skeleton, 
     transform_skeleton_coordinates, 
@@ -74,12 +75,37 @@ def process_neuron(neuron_id, formats=['swc'], output_dir='banc_vfb_output'):
                     print(f"   ⚠️  OBJ error: {e}")
             
             elif fmt == 'nrrd':
-                # Simple placeholder for NRRD
-                path = os.path.join(output_dir, f"{neuron_id}.nrrd")
-                with open(path, 'w') as f:
-                    f.write(f"# NRRD placeholder for {neuron_id}\n")
-                results['files']['nrrd'] = path
-                print(f"   ✅ {path} (placeholder)")
+                # NRRD volume format (requires additional processing)
+                try:
+                    import nrrd
+                    path = os.path.join(output_dir, f"{neuron_id}.nrrd")
+                    
+                    # Create simple volume representation from skeleton
+                    # Note: This is a basic implementation - full volume reconstruction would require mesh data
+                    coords = transformed.nodes[['x', 'y', 'z']].values
+                    
+                    # Create a simple binary volume around skeleton points
+                    min_coords = coords.min(axis=0).astype(int)
+                    max_coords = coords.max(axis=0).astype(int)
+                    shape = (max_coords - min_coords + 1).astype(int)
+                    
+                    volume = np.zeros(shape, dtype=np.uint8)
+                    
+                    # Mark skeleton points in volume
+                    for coord in coords:
+                        idx = (coord - min_coords).astype(int)
+                        if all(0 <= idx[i] < shape[i] for i in range(3)):
+                            volume[tuple(idx)] = 255
+                    
+                    # Save as NRRD
+                    nrrd.write(path, volume)
+                    results['files']['nrrd'] = path
+                    print(f"   ✅ {path}")
+                    
+                except ImportError:
+                    print("   ⚠️  NRRD requires 'pynrrd' package: pip install pynrrd")
+                except Exception as e:
+                    print(f"   ⚠️  NRRD error: {e}")
         
         # Create VFB metadata
         try:

@@ -14,18 +14,8 @@ from pathlib import Path
 from datetime import datetime
 from vfb_connect.cross_server_tools import VfbConnect
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from fafbseg import flywire  # flywire package now supports BANC through dataset='banc' parameter
 
-# Import CAVEclient and meshparty for direct BANC mesh and skeleton access
-try:
-    from caveclient import CAVEclient
-    from meshparty import trimesh_io
-    import trimesh
-    BANC_AVAILABLE = True
-except ImportError as e:
-    BANC_AVAILABLE = False
-
-# Try to import rpy2 for R integration
+# Try to import rpy2 for R integration (optional)
 try:
     import rpy2.robjects as ro
     from rpy2.robjects import pandas2ri
@@ -791,109 +781,4 @@ def load_skeleton(skeleton_file):
         return None
 
 
-def process_vfb_neuron_with_banc_data(vfb_neuron_id, banc_segment_id=None, output_dir='banc_vfb_output', formats=['swc', 'json']):
-    """
-    Complete workflow: Get VFB neuron metadata, download BANC data, align to templates, create VFB formats.
-    
-    Args:
-        vfb_neuron_id: VFB neuron identifier
-        banc_segment_id: BANC segment ID (if None, will try to find mapping)
-        output_dir: Output directory for processed files
-        formats: List of output formats ['swc', 'json', 'obj', 'nrrd']
-    
-    Returns:
-        dict: Processing results and file paths
-    """
-    results = {
-        'vfb_id': vfb_neuron_id,
-        'banc_segment_id': banc_segment_id,
-        'success': False,
-        'files': {},
-        'errors': []
-    }
-    
-    try:
-        print(f"\n=== Processing VFB neuron {vfb_neuron_id} ===")
-        
-        # Step 1: Get VFB metadata
-        print("Step 1: Getting VFB neuron metadata...")
-        vfb_data = get_vfb_neuron_data(vfb_neuron_id)
-        if not vfb_data:
-            results['errors'].append("Failed to get VFB neuron data")
-            return results
-        
-        results['vfb_metadata'] = vfb_data
-        print(f"Found VFB neuron: {vfb_data.get('label', 'Unknown')}")
-        
-        # Step 2: Find BANC mapping if not provided
-        if banc_segment_id is None:
-            print("Step 2: Looking for VFB->BANC mapping...")
-            # TODO: Implement mapping logic based on cell type/annotation matching
-            # For now, we'll need the BANC ID to be provided
-            results['errors'].append("BANC segment ID must be provided - automated mapping not yet implemented")
-            return results
-        
-        print(f"Using BANC segment ID: {banc_segment_id}")
-        
-        # Step 3: Download BANC annotations
-        print("Step 3: Downloading BANC annotations...")
-        annotation_files = get_banc_annotations(output_dir)
-        if annotation_files:
-            print(f"Downloaded {len(annotation_files)} annotation files")
-        
-        # Step 4: Get BANC neuron info
-        print("Step 4: Getting BANC neuron information...")
-        banc_info = get_banc_neuron_info(banc_segment_id, 
-                                       os.path.join(output_dir, 'annotations'))
-        results['banc_metadata'] = banc_info
-        print(f"BANC neuron type: {banc_info.get('cell_type', 'Unknown')}")
-        
-        # Step 5: Download BANC skeleton
-        print("Step 5: Downloading BANC skeleton data...")
-        skeleton_file = get_banc_626_skeleton(banc_segment_id, output_dir)
-        if not skeleton_file:
-            results['errors'].append("Failed to download BANC skeleton")
-            return results
-        
-        # Step 6: Load and transform skeleton
-        print("Step 6: Loading and transforming skeleton...")
-        skeleton = load_skeleton(skeleton_file)
-        if skeleton is None:
-            results['errors'].append("Failed to load skeleton")
-            return results
-        
-        # Step 7: Coordinate transformation (BANC -> JRC2018U)
-        print("Step 7: Transforming coordinates to JRC2018U template...")
-        # For now, using identity transform - need proper BANC->JRC2018U mapping
-        transformed_skeleton = skeleton.copy()
-        # TODO: Implement proper coordinate transformation
-        print("Warning: Using identity transform - proper BANC->JRC2018U transform needed")
-        
-        # Step 8: Create VFB output files
-        print("Step 8: Creating VFB output files...")
-        output_base = f"VFB_{vfb_neuron_id}_BANC_{banc_segment_id}"
-        
-        output_files = create_vfb_file(
-            transformed_skeleton, 
-            vfb_data,
-            output_base, 
-            output_dir, 
-            formats
-        )
-        
-        if output_files:
-            results['files'] = output_files
-            results['success'] = True
-            print(f"Successfully created {len(output_files)} output files")
-            for format_type, filepath in output_files.items():
-                print(f"  {format_type.upper()}: {filepath}")
-        else:
-            results['errors'].append("Failed to create output files")
-        
-        return results
-        
-    except Exception as e:
-        error_msg = f"Processing error: {str(e)}"
-        print(error_msg)
-        results['errors'].append(error_msg)
-        return results
+
