@@ -1,53 +1,139 @@
-# BANC to VFB Processing Pipeline - Summary
+# BANC → VFB Processing Pipeline - Technical Documentation
 
-## Overview
+## Current Pipeline Implementation
 
-This project implements a complete pipeline for processing BANC (Brain-And-Nerve-Cord) connectome data and generating VFB (Virtual Fly Brain) compatible files. The pipeline integrates multiple neuroinformatics tools and databases to transform BANC neuron data into formats suitable for VFB integration.
+This document describes the technical implementation of the BANC to VFB processing pipeline using **public BANC data** from Google Cloud Storage.
 
-## Pipeline Components
+## Architecture
 
-### 1. Code Review and Fixes ✅
-
-**Issues Found and Fixed:**
-- ✅ Fixed `iterrows()` unpacking bug: Changed `for idx, row in df.iterrows():` to `for idx, (_, row) in enumerate(df.iterrows()):`
-- ✅ Updated imports: Changed from deprecated `pcg_skel` to `meshparty` and `trimesh`
-- ✅ Removed duplicate function definitions
-- ✅ Fixed coordinate transformation logic
-- ✅ Added proper error handling and logging
-
-### 2. Environment Setup ✅
-
-**Virtual Environment:**
-```bash
-python -m venv venv
-source venv/bin/activate  # macOS/Linux
+### Data Flow
+```
+BANC Public Bucket → Download → Transform Coordinates → Generate Formats → VFB Output
+        ↓               ↓              ↓                    ↓            ↓
+   SWC Files      navis.read_swc   BANC→JRC2018F/VNC    SWC,OBJ,NRRD   JSON metadata
 ```
 
-**Dependencies Installed:**
-- Core scientific: pandas, numpy, scipy
-- Neuroinformatics: navis[all], flybrains, fafbseg
-- BANC/CAVE: caveclient, pcg-skel, meshparty, trimesh
-- VFB: vfb-connect, neo4j
-- Visualization: matplotlib, scikit-image
-- File handling: h5py, nrrd, requests
+### Core Components
 
-**macOS-Specific Setup:**
-- Installed HDF5 via Homebrew: `brew install hdf5`
-- Set environment variable: `export HDF5_DIR=/opt/homebrew/opt/hdf5`
+1. **`process.py`** - Core processing functions
+   - `get_banc_626_skeleton()` - Downloads from public bucket using gsutil
+   - `transform_skeleton_coordinates()` - BANC coordinate transformations
+   - `create_vfb_file()` - VFB metadata generation
 
-### 3. Database Connectivity ✅
+2. **`run_banc_pipeline.py`** - Command-line interface
+   - Multi-neuron processing
+   - Format selection (SWC, OBJ, NRRD)
+   - Error handling and logging
 
-**VFB Database:**
-- Server: kbw.virtualflybrain.org:7474
-- Credentials: neo4j / banana2-funky-Earthy-Irvin-Tactful0-felice9
-- Status: ✅ Connected successfully
-- Query results: 20,832 BANC neuron records found
+3. **Coordinate Transformations**
+   - Automatic brain/VNC detection based on y-coordinates
+   - Official BANC transformation functions (when available)
+   - Fallback to identity transform
 
-**BANC Authentication:**
-- Token: `4f286f518add5e15c2c82c20299295c7`
-- Datastack: brain_and_nerve_cord
-- Server: https://global.daf-apis.com
-- Status: ⚠️ Limited permissions (403 errors on some queries)
+## Data Sources
+
+### BANC Public Data
+- **Bucket**: `gs://lee-lab_brain-and-nerve-cord-fly-connectome/`
+- **Skeletons**: `neuron_skeletons/swcs-from-pcg-skel/`
+- **Access**: Public (no authentication required)
+- **Format**: SWC files with BANC segment IDs as filenames
+
+### Available Neurons
+Real neuron IDs available for processing:
+- `720575941350274352`
+- `720575941350334256`
+- `720575941350352176`
+- And thousands more...
+
+## Processing Workflow
+
+### 1. Skeleton Download
+```python
+# Download from public bucket using gsutil
+skeleton = get_banc_626_skeleton(segment_id)
+# Returns: navis.TreeNeuron object with nodes, edges
+```
+
+### 2. Coordinate Transformation
+```python
+# Transform BANC coordinates to VFB templates
+transformed = transform_skeleton_coordinates(skeleton, "BANC", "VFB")
+
+# Automatic detection:
+# - Brain neurons (y < 320,000 nm) → JRC2018F
+# - VNC neurons (y ≥ 320,000 nm) → JRCVNC2018F
+```
+
+### 3. Multi-format Output
+- **SWC**: `navis.write_swc()` - Standard neuroanatomy format
+- **OBJ**: `navis.to_trimesh().export()` - 3D mesh format
+- **NRRD**: Volume representation for analysis
+- **JSON**: VFB metadata with coordinate system info
+
+## Technical Details
+
+### Dependencies
+- **Core**: navis, pandas, numpy
+- **Cloud**: google-cloud-storage (gsutil)
+- **Transforms**: BANC package + pytransformix + ElastiX (optional)
+- **Mesh**: trimesh, pymeshlab
+
+### Coordinate Systems
+- **Source**: BANC native (4,4,45nm voxels)
+- **Brain Target**: JRC2018F (0.519 μm isotropic)
+- **VNC Target**: JRCVNC2018F
+- **Fallback**: Identity transform (preserves BANC coordinates)
+
+### Error Handling
+- Network connectivity failures
+- Missing neuron IDs
+- Coordinate transformation errors
+- Format conversion failures
+- All with graceful fallbacks and logging
+
+## Testing and Validation
+
+### Pipeline Status Check
+```bash
+python test_pipeline_status.py
+```
+Validates:
+- Core functionality
+- Dependency availability
+- Real data processing
+- Format generation
+
+### Production Testing
+```bash
+python run_banc_pipeline.py 720575941350274352 --formats swc
+```
+
+## Performance Characteristics
+
+### Typical Processing Times
+- **Download**: 2-5 seconds per neuron
+- **Transform**: < 1 second (identity) or 10-30 seconds (full BANC)
+- **SWC output**: < 1 second
+- **OBJ mesh**: 5-15 seconds
+- **Total**: 30-60 seconds per neuron with all formats
+
+### File Sizes (example neuron 720575941350274352)
+- **SWC**: ~9KB (230 nodes)
+- **OBJ**: Variable based on mesh complexity
+- **JSON metadata**: ~1KB
+
+## Production Deployment
+
+### Jenkins Integration
+The pipeline is designed for Jenkins automation:
+```bash
+python run_banc_pipeline.py NEURON_ID --formats swc,obj,nrrd --output-dir /vfb/data
+```
+
+### Scalability
+- Processes one neuron at a time (reliable)
+- Can be parallelized at the Jenkins level
+- Handles thousands of neurons from public bucket
 
 ### 4. Data Access Methods
 

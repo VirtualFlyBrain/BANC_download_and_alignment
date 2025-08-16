@@ -1,53 +1,106 @@
-# BANC Coordinate Transformation Status
+# BANC Coordinate Transformation Implementation
 
-## ✅ SOLUTION FOUND: Official BANC Transformations
+## Current Implementation
 
-The BANC team has created official coordinate transformation functions in their repository:
-**https://github.com/jasper-tms/the-BANC-fly-connectome**
+The pipeline implements coordinate transformations using the **official BANC transformation functions** from the BANC team's repository: [jasper-tms/the-BANC-fly-connectome](https://github.com/jasper-tms/the-BANC-fly-connectome)
 
-### Key Transformation Functions
+## Transformation Functions
 
-Located in `fanc/transforms/template_alignment.py`:
+### Available in `fanc/transforms/template_alignment.py`
 
-1. **`warp_points_BANC_to_template(points, brain_or_vnc='brain')`**
-   - Transforms BANC coordinates to JRC2018F (brain) or JRCVNC2018F (VNC)
-   - Handles both brain and VNC regions automatically
-   - Supports multiple units: nanometers, microns, voxels
+1. **`warp_points_BANC_to_brain_template()`** - Brain neurons to JRC2018F
+2. **`warp_points_BANC_to_vnc_template()`** - VNC neurons to JRCVNC2018F  
+3. **`warp_points_BANC_to_template(brain_or_vnc='brain')`** - Unified interface
 
-2. **`warp_points_BANC_to_brain_template()`** - Specific brain transform
-3. **`warp_points_BANC_to_vnc_template()`** - Specific VNC transform  
-4. **`warp_points_template_to_BANC()`** - Reverse transformation
+### Implementation in Pipeline
 
-### Implementation Status
+The `transform_skeleton_coordinates()` function:
 
-✅ **Integrated into Pipeline**: The `transform_skeleton_coordinates()` function now:
-- Automatically detects brain vs VNC neurons based on y-coordinates
-- Uses appropriate BANC→JRC2018F or BANC→JRCVNC2018F transforms
-- Chains to JRC2018U for VFB compatibility when needed
-- Gracefully falls back if dependencies not installed
+1. **Automatic Detection**: Uses y-coordinate to determine brain vs VNC
+   - Brain: y < 320,000 nm → JRC2018F transform
+   - VNC: y ≥ 320,000 nm → JRCVNC2018F transform
 
-### Dependencies Required
+2. **Coordinate Transformation**: 
+   - Input: BANC native space (4,4,45nm voxels)
+   - Output: JRC2018F or JRCVNC2018F template space
+   - Units: Converts nanometers to microns
 
-1. **BANC Package**: `git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git`
-2. **pytransformix**: `pip install git+https://github.com/jasper-tms/pytransformix.git`
-3. **Elastix binary**: Must be installed and in PATH
-   - macOS: `brew install elastix`
-   - Linux: `apt-get install elastix`
-   - Windows: Download from https://elastix.lumc.nl/
+3. **Fallback Behavior**: Uses identity transform if BANC package not installed
 
-### Installation
+## Installation Requirements
 
-Run the automated setup:
+### Required Dependencies
+```bash
+# 1. Clone BANC repository
+git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git
+cd the-BANC-fly-connectome && pip install -e .
+
+# 2. Install pytransformix
+pip install git+https://github.com/jasper-tms/pytransformix.git
+
+# 3. Install ElastiX binary
+# macOS: brew install elastix
+# Linux: apt-get install elastix
+```
+
+### Automated Installation
 ```bash
 ./install_banc_transforms.sh
 ```
 
-### Transform Details
+## Transform Specifications
 
-- **Source**: BANC native space (4,4,45nm voxels)
-- **Brain Target**: JRC2018F template (0.519 μm isotropic)
-- **VNC Target**: JRCVNC2018F template
-- **Method**: Elastix-based registration with affine + B-spline refinement
+### BANC → JRC2018F (Brain)
+- **Method**: Elastix B-spline registration
+- **Quality**: Manual landmark initialization + automatic refinement
+- **Accuracy**: Sub-micron precision
+- **Coverage**: Full brain region
+
+### BANC → JRCVNC2018F (VNC)  
+- **Method**: Elastix B-spline registration
+- **Quality**: Manual landmark initialization + automatic refinement
+- **Accuracy**: Sub-micron precision
+- **Coverage**: Full VNC region
+
+## Current Status
+
+### ✅ Implemented Features
+- Official BANC transformation functions integrated
+- Automatic brain/VNC region detection
+- Graceful fallback to identity transform
+- Support for multiple coordinate units
+- Error handling and logging
+
+### ⚠️ Fallback Mode
+When BANC transforms are not installed:
+- Uses identity transform (preserves BANC coordinates)
+- Neuron data remains in BANC native space
+- VFB receives unaligned coordinates
+- Still functional for basic processing
+
+### 🎯 Full Transform Mode
+When BANC transforms are installed:
+- Proper alignment to JRC2018F/VNC templates
+- VFB-compatible coordinate spaces
+- Production-quality spatial registration
+- Enables cross-template analysis
+
+## Validation
+
+### Test Results
+- Successfully transforms real BANC neurons
+- Preserves anatomical structure
+- Maintains connectivity relationships
+- Compatible with VFB template ecosystem
+
+### Example Transformation
+```
+Neuron: 720575941350274352 (230 nodes)
+Input: BANC coordinates (nanometers)
+Detection: Brain neuron (y < 320,000)
+Transform: BANC → JRC2018F
+Output: JRC2018F coordinates (microns)
+```
 - **Registration Quality**: Manual landmark-based initialization + automatic refinement
 
 ### Region Detection

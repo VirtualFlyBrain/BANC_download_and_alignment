@@ -1,53 +1,99 @@
-# BANC Connectome Download Setup
+# BANC → VFB Processing Pipeline
 
-## Python Dependencies
+Complete pipeline for downloading BANC connectome neuron data and converting it to VFB-compatible formats.
 
-```bash
-pip install navis
-pip install flybrains
-pip install fafbseg  # Now supports BANC through dataset='banc'
-pip install pandas
-pip install vfb-connect
-pip install rpy2  # Optional but recommended for better R integration
-```
+## Overview
 
-## R Dependencies
+This pipeline processes neurons from the BANC (Brain and Nerve Cord) fly connectome dataset and prepares them for integration with the Virtual Fly Brain (VFB) knowledge base using **public BANC data** from Google Cloud Storage.
 
-You need R installed with the following packages:
+## Current Method
 
-```r
-# Install pak for easy package management
-install.packages("pak")
+The pipeline uses:
+- ✅ **Public BANC Data**: Downloads from `gs://lee-lab_brain-and-nerve-cord-fly-connectome/`
+- ✅ **Official BANC Transforms**: Uses BANC team's coordinate transformation functions
+- ✅ **Multi-format Output**: Generates SWC, OBJ, and NRRD files
+- ✅ **No Authentication Required**: Public bucket access via gsutil
 
-# Install bancr package from GitHub
-pak::pkg_install("flyconnectome/bancr")
+## Quick Start
 
-# Install nat (should be installed as dependency)
-install.packages("nat")
-```
-
-## Environment Variables
-
-Set these before running the script:
+### Production Command
 
 ```bash
-export password="your_neo4j_password"
-export max_chunk_size=10  # Optional, default is 10
-export max_workers=5      # Optional, default is 5
-export redo=false         # Set to 'true' to reprocess existing files
+# Process single neuron
+python run_banc_pipeline.py 720575941350274352 --formats swc,obj,nrrd
+
+# Process multiple neurons  
+python run_banc_pipeline.py 720575941350274352 720575941350334256 --formats swc
 ```
 
-## Important Notes
+### Installation
 
-### 1. BANC Data Access
-The BANC dataset is available through the flywire package using `dataset='banc'`. The script uses:
-- `flywire.get_skeletons(body_id, dataset='banc')` for skeleton data
-- `flywire.get_mesh_neuron(body_id, dataset='banc', lod=2)` for mesh data
+```bash
+# 1. Clone repository
+git clone <this-repository>
+cd BANC_download_and_alignment
 
-You may need to set up authentication tokens if required for BANC access.
+# 2. Create virtual environment
+python -m venv venv
+source venv/bin/activate
 
-### 2. Neo4j Query
-The script uses the dataset identifier **'Bates2025'** for BANC data in the VFB database. The query structure matches the pattern used for other connectome datasets.
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Install BANC transforms (optional, for coordinate alignment)
+./install_banc_transforms.sh
+```
+
+## Dependencies
+
+### Required
+- Python 3.8+
+- navis[all] >= 1.6.0
+- pandas >= 2.0.0
+- Google Cloud SDK (gsutil)
+
+### Optional (for coordinate transforms)
+- BANC package (from GitHub)
+- pytransformix
+- ElastiX binary
+
+## Data Processing
+
+### Input
+- BANC neuron segment IDs (e.g., `720575941350274352`)
+- Available neurons listed at: `gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_skeletons/swcs-from-pcg-skel/`
+
+### Output
+- **SWC**: Skeleton format for neuroanatomy tools
+- **OBJ**: 3D mesh for visualization
+- **NRRD**: Volume format for analysis
+- **JSON**: VFB metadata
+
+### Coordinate Transformation
+- **BANC** → **JRC2018F** (brain neurons)
+- **BANC** → **JRCVNC2018F** (VNC neurons)
+- Automatic brain/VNC detection
+- Fallback to identity transform if BANC transforms not installed
+
+## Project Structure
+
+```
+├── process.py              # Core processing functions
+├── run_banc_pipeline.py    # Command-line interface
+├── test_pipeline_status.py # Pipeline validation
+├── install_banc_transforms.sh # Coordinate transform setup
+└── requirements.txt        # Python dependencies
+```
+
+## Testing
+
+```bash
+# Test pipeline functionality
+python test_pipeline_status.py
+
+# Quick validation
+python quick_test.py
+```
 
 ### 3. Transformation Strategy
 The bancr R package's `banc_to_JRC2018F` function has a `region` parameter:

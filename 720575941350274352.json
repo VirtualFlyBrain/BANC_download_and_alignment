@@ -1,0 +1,14 @@
+{
+  "neuron_id": "banc_vfb_output/720575941350274352.json",
+  "source": "BANC_626",
+  "processing_date": "2025-08-16T20:33:17.444359",
+  "coordinate_space": "VFB",
+  "formats_created": [
+    "swc"
+  ],
+  "skeleton_stats": {
+    "total_nodes": 230,
+    "total_branches": 27,
+    "soma_present": false
+  }
+}
