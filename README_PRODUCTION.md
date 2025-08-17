@@ -1,6 +1,6 @@
 # BANC → VFB Production Pipeline
 
-Production-ready pipeline for processing BANC connectome neuron data from VFB database integration with automated folder organization.
+Production-ready pipeline for processing BANC connectome neuron data from VFB database integration.
 
 ## Production Overview
 
@@ -94,319 +94,90 @@ The `EXISTS(r.folder)` condition ensures only neurons with allocated folder info
 - Organize files according to VFB database folder structure
 - Example: `VFB/i/0010/5bke/VFB_00101567/BANC_720575941559970319/`
 - Maintain processing state for resume capability
-3. **Transform**: Official BANC→JRC2018F/VNC coordinate alignment
-4. **Export**: Multi-format output (SWC, OBJ, NRRD, JSON)
 
-### Output Formats
+## Environment Configuration
 
-**SWC (Skeleton)**
-- Standard neuroanatomy format
-- Node-based tree structure
-- Compatible with all neuron analysis tools
+### Local Development
 
-**OBJ (Mesh)**
-- 3D surface representation
-- Generated using navis mesh conversion
-- Suitable for visualization and 3D analysis
+```bash
+# Default - uses current directory
+python run_full_banc_production.py --limit 5 --formats swc
+```
 
-**NRRD (Volume)**
-- 3D volumetric representation
-- Rasterized skeleton structure
-- Compatible with medical imaging tools
+### Jenkins Production
 
-**JSON (Metadata)**
-- VFB-compatible metadata
-- Coordinate system information
-- Processing parameters and timestamps
+```bash
+# Set production data folder
+export DATA_FOLDER=/IMAGE_WRITE/
 
-## Coordinate Transformation
+# Full production run
+python run_full_banc_production.py --formats swc,obj,nrrd --max-workers 4
+```
 
-### Automatic Region Detection
-- **Brain neurons**: y-coordinate < 320,000 nm → JRC2018F template
-- **VNC neurons**: y-coordinate ≥ 320,000 nm → JRCVNC2018F template
+## Command Line Reference
 
-### Transform Quality
-- **Method**: Official BANC elastix-based registration
-- **Accuracy**: Sub-micron precision
-- **Source**: BANC native space (4,4,45nm voxels)
-- **Target**: JRC2018F/VNC template spaces
+```bash
+python run_full_banc_production.py [OPTIONS]
 
-### Fallback Mode
-- **Basic**: Identity transform if BANC package not installed
-- **Quality**: Preserves BANC coordinates for basic processing
-- **Upgrade**: Run `./install_banc_transforms.sh` for full alignment
+Options:
+  --output-dir DIR          Output directory (default: vfb_banc_data)
+  --formats LIST            Formats: swc,obj,nrrd,json (default: swc,obj,nrrd)
+  --limit N                 Maximum neurons to process
+  --max-workers N           Parallel workers (default: 2)
+  --dry-run                 Show what would be processed
+  --no-skip-existing        Reprocess existing neurons
+  --resume                  Resume from last state
+```
 
-## Performance Specifications
+## Output Structure
 
-### Processing Time (per neuron)
-- **Download**: 2-5 seconds
-- **Transform**: 1 second (identity) / 10-30 seconds (full)
-- **SWC export**: < 1 second
-- **OBJ mesh**: 5-15 seconds
-- **Total**: 10-60 seconds depending on formats
+Files organized according to VFB database folder structure:
 
-### File Sizes (example: 720575941350274352)
-- **Input SWC**: ~9KB (230 nodes)
-- **Output SWC**: ~9KB (transformed coordinates)
-- **OBJ mesh**: Variable (depends on complexity)
-- **JSON metadata**: ~1KB
+```
+vfb_banc_data/
+├── VFB/i/0010/5bke/VFB_00101567/
+│   └── BANC_720575941559970319/
+│       ├── BANC_720575941559970319.swc
+│       ├── BANC_720575941559970319.obj
+│       ├── BANC_720575941559970319.nrrd
+│       └── BANC_720575941559970319.json
+└── processing_state.json
+```
 
-### System Requirements
-- **Memory**: 1-2GB per neuron (mesh generation)
-- **Storage**: 10-100KB per neuron (SWC), 1-10MB (OBJ)
-- **Network**: Reliable connection to Google Cloud
+## Monitoring and Validation
 
-## Error Handling
+The pipeline maintains a `processing_state.json` file with:
 
-### Robust Processing
-- Network connectivity failures → retry with exponential backoff
-- Missing neuron IDs → log error and continue with next
-- Transform failures → fallback to identity transform
-- Format errors → continue with available formats
+- Processed neuron IDs
+- Failed processing attempts
+- Last run timestamp
+- Processing statistics
 
-### Logging
-- Processing status for each neuron
-- Error details with stack traces
-- Performance metrics and timing
-- Output file locations and sizes
-
-## Production Validation
-
-### Tested Neurons
-- `720575941350274352`: 230 nodes, brain region
-- `720575941350334256`: VNC region
-- `720575941350352176`: Large neuron
-
-### Validation Results
-- ✅ Download success rate: 100% (public bucket)
-- ✅ Coordinate transform: Working with fallback
-- ✅ Format generation: SWC 100%, OBJ >95%, NRRD variable
-- ✅ Error recovery: Graceful handling of failures
-
-## Deployment Checklist
+## Production Deployment Checklist
 
 ### Prerequisites
-- [ ] Python 3.8+ environment
-- [ ] Google Cloud SDK installed (`gsutil` available)
-- [ ] Network access to Google Cloud Storage
-- [ ] Write permissions to output directory
 
-### Installation Verification
-```bash
-# Test pipeline functionality
-python test_pipeline_status.py
+1. ✅ Python 3.8+ environment
+2. ✅ Required packages: `pip install -r requirements.txt`
+3. ✅ Google Cloud SDK: `gsutil` command available
+4. ✅ VFB database access (kbw.virtualflybrain.org)
 
-# Expected output: "PRODUCTION READY WITH BASIC FEATURES"
-```
-
-### Production Testing
-```bash
-# Process test neuron
-python run_banc_pipeline.py 720575941350274352 --formats swc
-
-# Verify output files created in banc_vfb_output/
-```
-
-## Monitoring and Maintenance
-
-### Health Checks
-- Pipeline status: `python test_pipeline_status.py`
-- Dependency check: Validates all required packages
-- Data access: Tests public bucket connectivity
-- Transform capability: Checks coordinate transformation status
-
-### Maintenance Tasks
-- Update requirements: `pip install -r requirements.txt --upgrade`
-- Refresh BANC transforms: `./install_banc_transforms.sh`
-- Clean output directories: Remove old processed files
-
-This pipeline is **production-ready** and can immediately begin processing BANC neurons for VFB integration.
-
-## Architecture
-
-### Data Flow
-
-```
-VFB Neo4j DB → BANC Public Bucket → Coordinate Transform → Multi-format Output
-     ↓                ↓                      ↓                     ↓
-   Metadata        SWC Files           JRC2018F/VNC         SWC, OBJ, NRRD
-```
-
-### Key Components
-
-1. **`process.py`**: Core processing functions
-   - `get_banc_626_skeleton()`: Downloads from public bucket
-   - `transform_skeleton_coordinates()`: Official BANC transforms
-   - `process_vfb_neuron_with_banc_data()`: End-to-end workflow
-
-2. **`run_banc_pipeline.py`**: Command-line interface
-   - Multi-format processing
-   - Error handling and logging
-   - Production-ready deployment
-
-3. **Coordinate Transformations**: 
-   - Automatic brain/VNC detection
-   - BANC → JRC2018F (brain) or JRCVNC2018F (VNC)
-   - Optional chaining to JRC2018U for VFB compatibility
-
-## Usage
-
-### Basic Processing
+### Environment Setup
 
 ```bash
-# Single neuron, SWC format only
-python run_banc_pipeline.py 648518346349541188
+# Production environment variable
+export DATA_FOLDER=/IMAGE_WRITE/
 
-# Multiple formats
-python run_banc_pipeline.py 648518346349541188 --formats swc,obj,nrrd
-
-# Batch processing
-python run_banc_pipeline.py 648518346349541188,648518346349541189,648518346349541190
+# Verify VFB database connectivity
+python -c "from process import get_vfb_banc_neurons; print('VFB connection OK')"
 ```
 
-### Advanced Options
+### Production Run
 
 ```bash
-# Custom output directory
-python run_banc_pipeline.py 648518346349541188 --output-dir /path/to/output
-
-# Skip coordinate transformation (keep BANC coordinates)
-python run_banc_pipeline.py 648518346349541188 --no-transform
-
-# Verbose logging
-python run_banc_pipeline.py 648518346349541188 --verbose
+# Start production processing
+python run_full_banc_production.py \
+  --formats swc,obj,nrrd \
+  --max-workers 4 \
+  --output-dir vfb_banc_data
 ```
-
-## Output Formats
-
-### SWC (Skeleton)
-- Standard neuroanatomy format
-- Point-based tree structure
-- Compatible with all neuron visualization tools
-
-### OBJ (Mesh)
-- 3D surface mesh representation
-- Generated using navis mesh conversion
-- Suitable for 3D rendering and analysis
-
-### NRRD (Volume)
-- 3D volumetric representation
-- Rasterized skeleton with configurable radius
-- Compatible with medical imaging tools
-
-## Coordinate Transformations
-
-The pipeline uses official BANC transformation functions:
-
-### Automatic Region Detection
-- **Brain neurons** (y < 320,000 nm): → JRC2018F template
-- **VNC neurons** (y ≥ 320,000 nm): → JRCVNC2018F template
-
-### Transform Chain
-```
-BANC coordinates → JRC2018F/VNC → (optional) JRC2018U
-```
-
-### Dependencies
-- **BANC package**: Official transformation functions
-- **pytransformix**: ElastiX Python wrapper  
-- **ElastiX binary**: Core transformation engine
-
-## Configuration
-
-### VFB Database Connection
-
-Edit connection details in `process.py`:
-```python
-def get_vfb_neuron_metadata(neuron_id):
-    driver = GraphDatabase.driver(
-        "bolt://kbw.virtualflybrain.org:7474",
-        auth=("neo4j", "vfb")
-    )
-```
-
-### BANC Data Access
-
-Uses Google Cloud public bucket (no authentication required):
-```python
-BANC_BUCKET = "gs://lee-lab_brain-and-nerve-cord-fly-connectome"
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Import Error: fanc.transforms**
-   ```bash
-   # Install BANC package
-   ./install_banc_transforms.sh
-   ```
-
-2. **ElastiX not found**
-   ```bash
-   # macOS
-   brew install elastix
-   
-   # Linux
-   apt-get install elastix
-   
-   # Or download from https://elastix.lumc.nl/
-   ```
-
-3. **Google Cloud SDK**
-   ```bash
-   # Install gsutil
-   pip install google-cloud-storage
-   gcloud auth application-default login  # Optional for private buckets
-   ```
-
-### Error Logs
-
-The pipeline provides detailed error logging:
-- Network connectivity issues
-- Missing dependencies
-- Coordinate transformation failures
-- File I/O problems
-
-All errors include fallback behaviors to ensure processing continues.
-
-## Development
-
-### Testing
-
-```bash
-# Test with public BANC data
-python test_banc_public_data.py
-
-# Test coordinate transformations
-python -c "
-from process import transform_skeleton_coordinates
-# Test code here
-"
-```
-
-### Contributing
-
-1. Fork the repository
-2. Create feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit pull request
-
-## Data Sources
-
-- **BANC Connectome**: Jasper et al., Nature 2023
-- **Public Data**: `gs://lee-lab_brain-and-nerve-cord-fly-connectome/`
-- **VFB Database**: Virtual Fly Brain knowledge base
-- **Templates**: JRC2018F, JRCVNC2018F, JRC2018U
-
-## License
-
-[Specify license - typically matches source data licensing]
-
-## Citation
-
-If using this pipeline, please cite:
-- BANC paper: [Jasper et al., Nature 2023]
-- VFB: [Virtual Fly Brain project]
-- navis: [Schlegel et al., 2022]
