@@ -235,9 +235,8 @@ class BANCProductionProcessor:
             sample_vertices = vertices[sample_indices]
             
             # Create a minimal skeleton from sampled vertices
-            # The mesh coordinates should already be in micrometers (matching skeleton units)
-            # DO NOT multiply by 1000 - coordinates are already in micrometers!
-            sample_vertices_um = sample_vertices  # Already in µm
+            # BANC mesh coordinates are in NANOMETERS - convert to micrometers!
+            sample_vertices_um = sample_vertices / 1000.0  # Convert nm to µm
             
             # Create temporary skeleton nodes DataFrame
             temp_nodes = pd.DataFrame({
@@ -259,14 +258,19 @@ class BANCProductionProcessor:
                 transformed_skeleton = transform_skeleton_coordinates(temp_skeleton, 'BANC', 'JRC2018U')
             
             # Get transformation vectors from sample points
-            original_coords_um = sample_vertices  # Original in µm
+            original_coords_um = sample_vertices / 1000.0  # Convert original nm to µm
             transformed_coords_um = transformed_skeleton.nodes[['x', 'y', 'z']].values  # Transformed in µm
             
-            # Since we're using identity transform (no BANC package), coordinates are unchanged
-            # Apply the identity transformation to all mesh vertices 
-            transformed_vertices = vertices  # No transformation applied
+            # Apply coordinate transformation to all mesh vertices
+            # Convert all vertices from nanometers to micrometers
+            all_vertices_um = vertices / 1000.0
+            
+            # Since we're using identity transform (no BANC package), coordinates are unchanged after unit conversion
+            # In future: Apply proper BANC transformation matrix here
+            transformed_vertices = all_vertices_um  # Identity transform in micrometers
             
             logger.info(f"    Using identity transform (BANC package not available)")
+            logger.info(f"    Converted {len(vertices)} vertices from nanometers to micrometers")
             
             # Use template-specific dimensions from VFB database (exact specifications)
             # Define template space bounds based on actual VFB template NRRD dimensions
@@ -337,6 +341,53 @@ class BANCProductionProcessor:
             return False
         except Exception as e:
             logger.error(f"NRRD creation from OBJ failed: {e}")
+            return False
+    
+    def transform_obj_coordinates(self, obj_file_path, template_space):
+        """Transform OBJ file coordinates from BANC nanometers to template micrometers."""
+        try:
+            logger.info(f"    🔄 Transforming OBJ coordinates to {template_space}")
+            
+            # Read the OBJ file
+            vertices = []
+            faces = []
+            other_lines = []
+            
+            with open(obj_file_path, 'r') as f:
+                for line in f:
+                    if line.startswith('v '):
+                        # Vertex line: "v x y z"
+                        parts = line.strip().split()
+                        x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                        # Convert from nanometers to micrometers
+                        x_um, y_um, z_um = x / 1000.0, y / 1000.0, z / 1000.0
+                        vertices.append([x_um, y_um, z_um])
+                    elif line.startswith('f '):
+                        # Face line: keep as-is
+                        faces.append(line)
+                    else:
+                        # Comments, materials, etc.: keep as-is
+                        other_lines.append(line)
+            
+            # Write back the transformed OBJ file
+            with open(obj_file_path, 'w') as f:
+                # Write other lines (comments, etc.)
+                for line in other_lines:
+                    f.write(line)
+                
+                # Write transformed vertices
+                for vertex in vertices:
+                    f.write(f"v {vertex[0]:.6f} {vertex[1]:.6f} {vertex[2]:.6f}\n")
+                
+                # Write faces
+                for face_line in faces:
+                    f.write(face_line)
+            
+            logger.info(f"    ✅ Transformed {len(vertices)} vertices from nm to µm")
+            return True
+            
+        except Exception as e:
+            logger.error(f"OBJ coordinate transformation failed: {e}")
             return False
     
     def process_single_neuron(self, neuron_info):
@@ -413,6 +464,9 @@ class BANCProductionProcessor:
                             obj_file = convert_banc_mesh_to_obj(mesh_files, neuron_id, str(output_dir))
                             
                             if obj_file and os.path.exists(obj_file):
+                                # Transform OBJ coordinates from BANC space to template space
+                                self.transform_obj_coordinates(obj_file, template_space)
+                                
                                 # Move to correct output path if needed
                                 if obj_file != str(output_path):
                                     import shutil
