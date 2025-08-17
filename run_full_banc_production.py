@@ -179,17 +179,14 @@ class BANCProductionProcessor:
         """Generate output file paths for a neuron based on VFB local folder structure."""
         # Create full directory path under DATA_FOLDER using VFB structure
         # local_folder_path is like: VFB/i/0010/5fa2/VFB_00101567
-        # Result: $DATA_FOLDER/VFB/i/0010/5fa2/VFB_00101567/BANC_{neuron_id}/
+        # Result: $DATA_FOLDER/VFB/i/0010/5fa2/VFB_00101567/volume.{ext}
+        # The uniqueness comes from the folder structure, not the filename
         vfb_dir = self.output_dir / local_folder_path
         vfb_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create neuron-specific subdirectory
-        neuron_dir = vfb_dir / f"BANC_{neuron_id}"
-        neuron_dir.mkdir(parents=True, exist_ok=True)
-        
         paths = {}
         for fmt in self.formats:
-            paths[fmt] = neuron_dir / f"BANC_{neuron_id}.{fmt}"
+            paths[fmt] = vfb_dir / f"volume.{fmt}"
         
         return paths
     
@@ -390,32 +387,13 @@ class BANCProductionProcessor:
                     else:
                         logger.warning(f"    ⚠️  NRRD creation failed")
             
-            # Step 6: Create metadata JSON
-            json_path = output_paths['swc'].parent / f"BANC_{neuron_id}.json"
-            metadata = {
-                'neuron_id': neuron_id,
-                'source': 'BANC',
-                'template_space': template_space,
-                'processing_date': datetime.now().isoformat(),
-                'coordinate_units': 'micrometers',
-                'voxel_size': [0.622, 0.622, 0.622] if 'JRC2018U' in template_space else [0.4, 0.4, 0.4],
-                'files': created_files,
-                'node_count': len(transformed.nodes),
-                'cable_length': float(transformed.cable_length) if hasattr(transformed, 'cable_length') else None
-            }
-            
-            with open(json_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            logger.info(f"  📋 Metadata: {json_path.name}")
             logger.info(f"  🎉 Successfully processed {neuron_id}")
             
             return {
                 'success': True,
                 'neuron_id': neuron_id,
                 'template_space': template_space,
-                'files': created_files,
-                'metadata': str(json_path)
+                'files': created_files
             }
             
         except Exception as e:
