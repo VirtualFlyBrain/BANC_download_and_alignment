@@ -64,9 +64,9 @@ def get_vfb_banc_neurons(limit=None):
         if limit:
             query += f" LIMIT {limit}"
         
-        results = vfb.neo_query_wrapper(query)
+        results = vfb.cypher_query(query)
         
-        if not results:
+        if results.empty:
             # Fallback: Try broader search for BANC references
             print("No BANC626 site references found, trying broader BANC search...")
             query = """
@@ -82,9 +82,9 @@ def get_vfb_banc_neurons(limit=None):
             """
             if limit:
                 query += f" LIMIT {limit}"
-            results = vfb.neo_query_wrapper(query)
+            results = vfb.cypher_query(query)
         
-        if not results:
+        if results.empty:
             # Generate test data with proper folder structure for development
             print("No neurons found in VFB, generating test data with known BANC IDs and folder paths...")
             test_neurons = [
@@ -116,37 +116,70 @@ def get_vfb_banc_neurons(limit=None):
         
         # Convert to list format and extract folder paths
         neurons = []
-        for record in results:
-            banc_id = str(record.get('banc_id', ''))
-            vfb_id = record.get('vfb_id', '')
-            template_id = record.get('template_id', 'VFB_00101567')
-            folder_path = record.get('folder_path', '')
-            
-            # Parse folder URL to extract local filesystem path
-            if folder_path and 'virtualflybrain.org/data/' in folder_path:
-                # Extract path after /data/ from URL
-                # http://www.virtualflybrain.org/data/VFB/i/0010/5fa2/VFB_00101567/
-                # becomes: VFB/i/0010/5fa2/VFB_00101567/
-                url_parts = folder_path.split('/data/')
-                if len(url_parts) > 1:
-                    local_folder_path = url_parts[1].rstrip('/')  # Remove trailing slash
+        if hasattr(results, 'iterrows'):
+            # DataFrame from cypher_query
+            for _, record in results.iterrows():
+                banc_id = str(record.get('banc_id', ''))
+                vfb_id = record.get('vfb_id', '')
+                template_id = record.get('template_id', 'VFB_00101567')
+                folder_path = record.get('folder_path', '')
+                
+                # Parse folder URL to extract local filesystem path
+                if folder_path and 'virtualflybrain.org/data/' in folder_path:
+                    # Extract path after /data/ from URL
+                    # http://www.virtualflybrain.org/data/VFB/i/0010/5fa2/VFB_00101567/
+                    # becomes: VFB/i/0010/5fa2/VFB_00101567/
+                    url_parts = folder_path.split('/data/')
+                    if len(url_parts) > 1:
+                        local_folder_path = url_parts[1].rstrip('/')  # Remove trailing slash
+                    else:
+                        # Fallback to template-based path
+                        local_folder_path = f'VFB/i/{vfb_id[-4:]}/{template_id}'
                 else:
-                    # Fallback to template-based path
-                    local_folder_path = f'VFB/i/{vfb_id[-4:]}/{template_id}'
-            else:
-                # Default structure for missing folder_path
-                local_folder_path = f'VFB/i/{vfb_id[-4:] if len(vfb_id) >= 4 else "unknown"}/{template_id}'
-            
-            neurons.append({
-                'id': banc_id,
-                'vfb_id': vfb_id,
-                'name': record.get('name', f'BANC Neuron {banc_id}'),
-                'template_id': template_id,
-                'folder_path': folder_path,
-                'local_folder_path': local_folder_path,  # Key addition for filesystem organization
-                'template_folder': template_id,  # Keep for backward compatibility
-                'status': 'ready'
-            })
+                    # Default structure for missing folder_path
+                    local_folder_path = f'VFB/i/{vfb_id[-4:] if len(vfb_id) >= 4 else "unknown"}/{template_id}'
+                
+                neurons.append({
+                    'id': banc_id,
+                    'vfb_id': vfb_id,
+                    'name': record.get('name', f'BANC Neuron {banc_id}'),
+                    'template_id': template_id,
+                    'folder_path': folder_path,
+                    'local_folder_path': local_folder_path,  # Key addition for filesystem organization
+                    'template_folder': template_id,  # Keep for backward compatibility
+                    'status': 'ready'
+                })
+        else:
+            # List of dictionaries (test data)
+            for record in results:
+                banc_id = str(record.get('banc_id', ''))
+                vfb_id = record.get('vfb_id', '')
+                template_id = record.get('template_id', 'VFB_00101567')
+                folder_path = record.get('folder_path', '')
+                
+                # Parse folder URL to extract local filesystem path
+                if folder_path and 'virtualflybrain.org/data/' in folder_path:
+                    # Extract path after /data/ from URL
+                    url_parts = folder_path.split('/data/')
+                    if len(url_parts) > 1:
+                        local_folder_path = url_parts[1].rstrip('/')  # Remove trailing slash
+                    else:
+                        # Fallback to template-based path
+                        local_folder_path = f'VFB/i/{vfb_id[-4:]}/{template_id}'
+                else:
+                    # Default structure for missing folder_path
+                    local_folder_path = f'VFB/i/{vfb_id[-4:] if len(vfb_id) >= 4 else "unknown"}/{template_id}'
+                
+                neurons.append({
+                    'id': banc_id,
+                    'vfb_id': vfb_id,
+                    'name': record.get('name', f'BANC Neuron {banc_id}'),
+                    'template_id': template_id,
+                    'folder_path': folder_path,
+                    'local_folder_path': local_folder_path,  # Key addition for filesystem organization
+                    'template_folder': template_id,  # Keep for backward compatibility
+                    'status': 'ready'
+                })
         
         print(f"Found {len(neurons)} BANC neurons with folder organization")
         for neuron in neurons[:5]:  # Show first 5
