@@ -127,7 +127,11 @@ vfb_banc_data/
 ├── process.py                   # Core processing functions
 ├── requirements.txt             # Python dependencies
 ├── install_banc_transforms.sh   # Coordinate transform setup
-└── vfb_banc_data/              # Production output directory
+├── vfb_banc_data/              # Production output directory
+├── README_PRODUCTION.md         # Production deployment guide
+├── ENVIRONMENT_CONFIG.md        # Environment configuration
+├── VFB_FOLDER_MAPPING.md        # VFB folder organization details
+└── FOLDER_ORGANIZATION_UPDATE.md # Current pipeline status
 ```
 
 ## Command Line Options
