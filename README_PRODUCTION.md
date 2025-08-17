@@ -1,53 +1,99 @@
 # BANC → VFB Production Pipeline
 
-Production-ready pipeline for processing BANC connectome neuron data and generating VFB-compatible formats.
+Production-ready pipeline for processing BANC connectome neuron data from VFB database integration with automated folder organization.
 
 ## Production Overview
 
-This pipeline downloads neurons from the **BANC public data bucket** and converts them to VFB-compatible formats with proper coordinate transformations.
+This pipeline queries the VFB kbw database for BANC neurons and processes them according to VFB folder organization standards.
 
 **Key Features:**
-- ✅ **No Authentication Required**: Uses public Google Cloud data
-- ✅ **Official Coordinate Transforms**: BANC team's transformation functions
-- ✅ **Multi-format Output**: SWC, OBJ mesh, NRRD volume
-- ✅ **Production Tested**: Validated with real BANC neurons
+
+- ✅ **VFB Database Integration**: Direct queries to VFB kbw database
+- ✅ **Production Data Filtering**: Only processes neurons with allocated folder information
+- ✅ **VFB Folder Organization**: Automatic folder structure from database URLs
+- ✅ **Environment Configuration**: Local development + Jenkins production deployment
+- ✅ **Multi-format Output**: SWC, OBJ mesh, NRRD volume, JSON metadata
 
 ## Jenkins Deployment
 
 ### Production Commands
 
 ```bash
-# Single neuron with all formats
-python run_banc_pipeline.py 720575941350274352 --formats swc,obj,nrrd --output-dir /vfb/data
+# Set production environment
+export DATA_FOLDER=/IMAGE_WRITE/
 
-# Multiple neurons, SWC only
-python run_banc_pipeline.py 720575941350274352 720575941350334256 --formats swc
+# Full production pipeline
+python run_full_banc_production.py --formats swc,obj,nrrd --max-workers 4
 
-# Batch processing with custom output
-python run_banc_pipeline.py 720575941350274352 720575941350334256 720575941350352176 --formats swc,obj --output-dir /production/output
+# Limited production run
+python run_full_banc_production.py --limit 100 --formats swc,obj
 ```
 
-### Installation Script
+### Installation
 
 ```bash
-# Full installation with coordinate transforms
-./install_banc_transforms.sh
-
-# Basic installation (identity transforms)
+# Production installation
 pip install -r requirements.txt
+
+# Optional: Install BANC coordinate transforms
+./install_banc_transforms.sh
 ```
 
-## Data Processing
+## VFB Database Integration
 
-### Input Data
-- **Source**: BANC public bucket `gs://lee-lab_brain-and-nerve-cord-fly-connectome/`
-- **Format**: SWC skeleton files
-- **Access**: Public (no authentication required)
-- **Available Neurons**: Thousands of validated BANC segment IDs
+### Data Source
 
-### Processing Pipeline
-1. **Download**: `gsutil cp` from public bucket
-2. **Load**: `navis.read_swc()` to create neuron object
+- **Database**: VFB kbw database (kbw.virtualflybrain.org)
+- **Query**: BANC neurons with `EXISTS(r.folder)` condition
+- **Organization**: VFB folder URLs automatically parsed to filesystem paths
+- **Templates**: JRC2018U (brain) and JRCVNC2018U (VNC) coordinate spaces
+
+### Production Query
+
+```cypher
+MATCH (s:Site {short_form:'BANC626'})<-[c:hasDbXref]-(i:Individual)<-[:depicts]-(ic:Individual)-[r:in_register_with]->(tc:Template)-[:depicts]-(t:Template) 
+WHERE exists(r.folder)
+RETURN c.accession[0] as banc_id,
+       i.short_form as vfb_id,
+       t.short_form as template_id,
+       r.folder[0] as folder_path
+```
+
+The `EXISTS(r.folder)` condition ensures only neurons with allocated folder information are processed, which is critical during ongoing data loading where folder information is added once per day.
+
+## Processing Pipeline
+
+### Step 1: VFB Database Query
+
+- Query VFB database for BANC neurons with folder allocation
+- Parse VFB folder URLs to local filesystem paths
+- Map template IDs to coordinate spaces
+
+### Step 2: Skeleton Download
+
+- Download skeleton data from BANC public bucket
+- Load with navis for processing
+- Validate skeleton structure
+
+### Step 3: Coordinate Transformation
+
+- Transform BANC coordinates to VFB template spaces
+- Brain neurons: BANC → JRC2018U
+- VNC neurons: BANC → JRCVNC2018U  
+- Automatic region detection based on coordinates
+
+### Step 4: Multi-format Export
+
+- **SWC**: Skeleton format for neuroanatomy
+- **OBJ**: 3D mesh for visualization
+- **NRRD**: Volume format for analysis
+- **JSON**: VFB metadata with processing information
+
+### Step 5: VFB Folder Organization
+
+- Organize files according to VFB database folder structure
+- Example: `VFB/i/0010/5bke/VFB_00101567/BANC_720575941559970319/`
+- Maintain processing state for resume capability
 3. **Transform**: Official BANC→JRC2018F/VNC coordinate alignment
 4. **Export**: Multi-format output (SWC, OBJ, NRRD, JSON)
 
