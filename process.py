@@ -606,7 +606,7 @@ def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="
         
         # Handle BANC-specific transformations using official BANC transforms
         if source_space == "BANC":
-            if target_space in ["VFB", "JRC2018F", "JRC2018U"]:
+            if target_space in ["VFB", "JRC2018F", "JRC2018U", "JRCVNC2018U"]:
                 print("Using official BANC transformation functions")
                 
                 try:
@@ -620,57 +620,66 @@ def transform_skeleton_coordinates(skeleton, source_space="BANC", target_space="
                     # Get skeleton coordinates
                     points = skeleton.nodes[['x', 'y', 'z']].values
                     
-                    # Determine if this is brain or VNC based on y-coordinate
-                    # From BANC wiki: brain (z: 0-6206), VNC (z: 1438-7009)
-                    # In nm coordinates: y > ~320,000 is typically VNC region
-                    avg_y = np.mean(points[:, 1])
-                    
-                    if avg_y > 320000:  # VNC region
-                        print(f"Detected VNC neuron (avg y: {avg_y:.0f}nm), using VNC template transform")
+                    # Determine transform based on target space
+                    if target_space == "JRCVNC2018U":
+                        # Direct VNC transformation: BANC → JRCVNC2018F → JRCVNC2018U
+                        print(f"Using VNC template transform chain: BANC → JRCVNC2018F → {target_space}")
                         transformed_points = warp_points_BANC_to_vnc_template(
                             points,
                             input_units='nanometers',
                             output_units='microns'
                         )
-                        coordinate_space = "JRCVNC2018F"
-                    else:  # Brain region
-                        print(f"Detected brain neuron (avg y: {avg_y:.0f}nm), using brain template transform")
+                        intermediate_space = "JRCVNC2018F"
+                    else:
+                        # Brain transformation: BANC → JRC2018F → JRC2018U
+                        print(f"Using brain template transform chain: BANC → JRC2018F → {target_space}")
                         transformed_points = warp_points_BANC_to_brain_template(
                             points,
                             input_units='nanometers',
                             output_units='microns'
                         )
-                        coordinate_space = "JRC2018F"
+                        intermediate_space = "JRC2018F"
                     
-                    # Update skeleton coordinates
+                    # Update skeleton coordinates with first transformation
                     skeleton_copy = skeleton.copy()
                     skeleton_copy.nodes.loc[:, ['x', 'y', 'z']] = transformed_points
                     
-                    # If target is VFB (which typically uses JRC2018U), chain transforms
-                    if target_space == "VFB" and coordinate_space == "JRC2018F":
-                        print("Chaining transform: JRC2018F -> JRC2018U for VFB compatibility")
+                    # Apply second transformation if needed using navis flybrains
+                    if ((target_space == "JRC2018U" and intermediate_space == "JRC2018F") or 
+                        (target_space == "JRCVNC2018U" and intermediate_space == "JRCVNC2018F") or
+                        target_space == "VFB"):
+                        
+                        final_target = "JRC2018U" if target_space in ["VFB", "JRC2018U"] else "JRCVNC2018U"
+                        print(f"Chaining transform: {intermediate_space} → {final_target}")
+                        
                         try:
                             import flybrains
                             final_points = navis.xform_brain(
                                 transformed_points, 
-                                source='JRC2018F', 
-                                target='JRC2018U'
+                                source=intermediate_space, 
+                                target=final_target
                             )
                             skeleton_copy.nodes.loc[:, ['x', 'y', 'z']] = final_points
+                            coordinate_space = final_target
                         except Exception as e:
-                            print(f"JRC2018F->JRC2018U transform failed: {e}")
-                            print("Using JRC2018F coordinates")
+                            print(f"{intermediate_space}→{final_target} transform failed: {e}")
+                            print(f"Using {intermediate_space} coordinates instead")
+                            coordinate_space = intermediate_space
+                    else:
+                        coordinate_space = intermediate_space
                     
                     print(f"Successfully transformed to {coordinate_space} template space")
                     return skeleton_copy
                     
                 except ImportError as e:
                     print(f"BANC transform package not available: {e}")
-                    print("To use official BANC transforms, install the BANC package:")
-                    print("git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git")
-                    print("cd the-BANC-fly-connectome && pip install -e .")
-                    print("Also requires: pip install git+https://github.com/jasper-tms/pytransformix.git")
-                    print("And elastix binary in PATH")
+                    print("To use official BANC transforms, run the installation script:")
+                    print("  bash install_banc_transforms.sh")
+                    print("This will install:")
+                    print("  - BANC repository: git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git")
+                    print("  - pytransformix: pip install git+https://github.com/jasper-tms/pytransformix.git")
+                    print("  - elastix binary (brew install elastix on macOS)")
+                    print("Using identity transform as fallback")
                     return skeleton.copy()
                 
                 except Exception as e:

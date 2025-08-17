@@ -250,7 +250,10 @@ class BANCProductionProcessor:
             temp_skeleton = navis.TreeNeuron(temp_nodes, units='nanometers')
             
             # Transform the sample skeleton to get the transformation parameters
-            transformed_skeleton = transform_skeleton_coordinates(temp_skeleton, 'BANC', 'VFB')
+            if 'VNC' in template_space:
+                transformed_skeleton = transform_skeleton_coordinates(temp_skeleton, 'BANC', 'JRCVNC2018U')
+            else:
+                transformed_skeleton = transform_skeleton_coordinates(temp_skeleton, 'BANC', 'JRC2018U')
             
             # Get transformation vectors from sample points
             original_coords_um = sample_vertices  # Original in µm
@@ -369,11 +372,11 @@ class BANCProductionProcessor:
             # Step 3: Transform coordinates based on template space
             logger.info(f"  🔄 Transforming coordinates to {template_space}...")
             if 'VNC' in template_space:
-                # BANC VNC → JRCVNC2018F → JRCVNC2018U
-                transformed = transform_skeleton_coordinates(skeleton, 'BANC', 'VFB')
+                # BANC VNC → JRCVNC2018U (use specific VNC target)
+                transformed = transform_skeleton_coordinates(skeleton, 'BANC', 'JRCVNC2018U')
             else:
-                # BANC Brain → JRC2018F → JRC2018U  
-                transformed = transform_skeleton_coordinates(skeleton, 'BANC', 'VFB')
+                # BANC Brain → JRC2018U (use specific brain target)
+                transformed = transform_skeleton_coordinates(skeleton, 'BANC', 'JRC2018U')
             
             logger.info(f"  ✅ Coordinates transformed")
             
