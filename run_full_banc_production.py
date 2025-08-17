@@ -102,44 +102,45 @@ class BANCProductionProcessor:
     """Complete BANC production processing pipeline."""
     
     def __init__(self, output_dir='vfb_banc_data', formats=['swc', 'obj', 'nrrd'], 
-                 skip_existing=True, max_workers=1, brain_template='JRC2018U', vnc_template='JRCVNC2018U'):
+                 skip_existing=True, max_workers=1):
         
         # Resolve output directory with environment-specific mapping
         self.output_dir = resolve_data_folder(output_dir)
         self.formats = formats
         self.skip_existing = skip_existing
         self.max_workers = max_workers
-        self.brain_template = brain_template
-        self.vnc_template = vnc_template
         
-        # Template directory structure using configurable template names
-        self.template_dirs = {
-            self.brain_template: self.output_dir / self.brain_template,
-            self.vnc_template: self.output_dir / self.vnc_template
-        }
+        # VFB folder mappings (will be populated from database)
+        self.folder_mappings = {}
         
-        # Create directory structure
-        self.setup_directories()
+        # Create base directory structure
+        self.setup_base_directory()
         
         # Processing state
         self.state_file = self.output_dir / 'processing_state.json'
         self.load_state()
         
-    def setup_directories(self):
-        """Create template-specific output directories."""
-        logger.info("Setting up directory structure...")
+    def setup_base_directory(self):
+        """Create base output directory."""
+        logger.info("Setting up base directory structure...")
         logger.info(f"Base output directory: {self.output_dir}")
-        logger.info(f"Brain template: {self.brain_template}")
-        logger.info(f"VNC template: {self.vnc_template}")
         
         # Create base output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create template subdirectories
-        for template, path in self.template_dirs.items():
-            path.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Created directory: {path}")
     
+    def get_or_create_folder_directory(self, folder_short_form):
+        """Get or create directory for a specific VFB folder short_form."""
+        if not folder_short_form:
+            folder_short_form = 'VFB_00101567'  # Default to JRC2018U
+        
+        folder_dir = self.output_dir / folder_short_form
+        folder_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Cache for reuse
+        self.folder_mappings[folder_short_form] = folder_dir
+        
+        return folder_dir
+        
     def load_state(self):
         """Load processing state from previous runs."""
         if self.state_file.exists():
@@ -162,27 +163,24 @@ class BANCProductionProcessor:
         except Exception as e:
             logger.error(f"Could not save state: {e}")
     
-    def get_template_space(self, skeleton):
-        """Determine appropriate template space based on neuron coordinates."""
-        try:
-            coords = skeleton.nodes[['x', 'y', 'z']].values
-            avg_y = np.mean(coords[:, 1])
-            
-            # BANC coordinate analysis: y > ~320,000 nm is VNC region
-            if avg_y > 320000:
-                return self.vnc_template
-            else:
-                return self.brain_template
-        except Exception as e:
-            logger.warning(f"Could not determine template space: {e}, defaulting to {self.brain_template}")
-            return self.brain_template
+    def get_template_space_from_folder(self, folder_short_form):
+        """Determine template space from VFB folder short_form."""
+        # Known VFB template mappings
+        template_mappings = {
+            'VFB_00101567': 'JRC2018U',      # JRC2018U brain template
+            'VFB_00200000': 'JRCVNC2018U',   # VNC template (example)
+            'VFB_00300000': 'JRCVNC2018U',   # Another VNC template (example)
+        }
+        
+        return template_mappings.get(folder_short_form, 'JRC2018U')  # Default to brain
     
-    def get_output_paths(self, neuron_id, template_space):
-        """Generate output file paths for a neuron."""
-        template_dir = self.template_dirs[template_space]
+    def get_output_paths(self, neuron_id, folder_short_form):
+        """Generate output file paths for a neuron based on VFB folder."""
+        # Get or create the folder directory
+        folder_dir = self.get_or_create_folder_directory(folder_short_form)
         
         # Create neuron-specific subdirectory using VFB short_form format
-        neuron_dir = template_dir / f"BANC_{neuron_id}"
+        neuron_dir = folder_dir / f"BANC_{neuron_id}"
         neuron_dir.mkdir(exist_ok=True)
         
         paths = {}
@@ -206,11 +204,11 @@ class BANCProductionProcessor:
             coords = skeleton.nodes[['x', 'y', 'z']].values
             
             # Determine voxel size based on template space
-            if template_space == self.brain_template:
+            if 'JRC2018U' in template_space:
                 # JRC2018U standard voxel size: 0.622 x 0.622 x 0.622 µm
                 voxel_size = [0.622, 0.622, 0.622]
                 space = 'left-posterior-superior'
-            else:  # VNC template
+            else:  # VNC template (JRCVNC2018U)
                 # JRCVNC2018U standard voxel size: 0.4 x 0.4 x 0.4 µm  
                 voxel_size = [0.4, 0.4, 0.4]
                 space = 'left-posterior-superior'
@@ -262,7 +260,12 @@ class BANCProductionProcessor:
             logger.error(f"Invalid neuron ID: {neuron_info}")
             return {'success': False, 'error': 'Invalid neuron ID'}
         
+        # Get VFB folder information from database
+        folder_short_form = neuron_info.get('template_folder', 'VFB_00101567')  # Default to JRC2018U
+        template_space = self.get_template_space_from_folder(folder_short_form)
+        
         logger.info(f"🧠 Processing BANC neuron: {neuron_id}")
+        logger.info(f"  📁 VFB folder: {folder_short_form} → {template_space}")
         
         try:
             # Step 1: Download skeleton from public BANC data
@@ -275,19 +278,15 @@ class BANCProductionProcessor:
             
             logger.info(f"  ✅ Downloaded: {len(skeleton.nodes)} nodes")
             
-            # Step 2: Determine template space
-            template_space = self.get_template_space(skeleton)
-            logger.info(f"  🎯 Template space: {template_space}")
-            
-            # Step 3: Check if files already exist
-            output_paths = self.get_output_paths(neuron_id, template_space)
+            # Step 2: Check if files already exist (using folder-based paths)
+            output_paths = self.get_output_paths(neuron_id, folder_short_form)
             if self.files_exist(output_paths):
                 logger.info(f"  ⏭️  Files already exist, skipping")
                 return {'success': True, 'skipped': True, 'files': output_paths}
             
-            # Step 4: Transform coordinates
-            logger.info(f"  🔄 Transforming coordinates...")
-            if template_space == self.vnc_template:
+            # Step 3: Transform coordinates based on template space
+            logger.info(f"  🔄 Transforming coordinates to {template_space}...")
+            if 'VNC' in template_space:
                 # BANC VNC → JRCVNC2018F → JRCVNC2018U
                 transformed = transform_skeleton_coordinates(skeleton, 'BANC', 'VFB')
             else:
@@ -296,7 +295,7 @@ class BANCProductionProcessor:
             
             logger.info(f"  ✅ Coordinates transformed")
             
-            # Step 5: Create output files
+            # Step 4: Create output files
             logger.info(f"  📁 Creating output files...")
             created_files = {}
             
@@ -345,7 +344,7 @@ class BANCProductionProcessor:
                 'template_space': template_space,
                 'processing_date': datetime.now().isoformat(),
                 'coordinate_units': 'micrometers',
-                'voxel_size': [0.622, 0.622, 0.622] if template_space == self.brain_template else [0.4, 0.4, 0.4],
+                'voxel_size': [0.622, 0.622, 0.622] if 'JRC2018U' in template_space else [0.4, 0.4, 0.4],
                 'files': created_files,
                 'node_count': len(transformed.nodes),
                 'cable_length': float(transformed.cable_length) if hasattr(transformed, 'cable_length') else None
@@ -551,20 +550,13 @@ Examples:
     parser.add_argument('--resume', action='store_true',
                        help='Resume from previous run (default behavior)')
     
-    parser.add_argument('--brain-template', default='JRC2018U',
-                       help='Brain template folder name (default: JRC2018U)')
-    
-    parser.add_argument('--vnc-template', default='JRCVNC2018U',
-                       help='VNC template folder name (default: JRCVNC2018U)')
-    
     args = parser.parse_args()
     
     # Show environment configuration
     data_folder = os.getenv('DATA_FOLDER', '/data/')
     logger.info(f"Environment DATA_FOLDER: {data_folder}")
     logger.info(f"Output directory argument: {args.output_dir}")
-    logger.info(f"Brain template: {args.brain_template}")
-    logger.info(f"VNC template: {args.vnc_template}")
+    logger.info("Using VFB database folder organization for template mapping")
     
     # Parse formats
     formats = [f.strip() for f in args.formats.split(',')]
@@ -580,9 +572,7 @@ Examples:
         output_dir=args.output_dir,
         formats=formats,
         skip_existing=not args.no_skip_existing,
-        max_workers=args.max_workers,
-        brain_template=args.brain_template,
-        vnc_template=args.vnc_template
+        max_workers=args.max_workers
     )
     
     # Run pipeline

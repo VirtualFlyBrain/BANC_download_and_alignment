@@ -49,17 +49,16 @@ def get_vfb_banc_neurons(limit=None):
             neo_credentials=('neo4j', password)
         )
         
-        # Enhanced query for BANC neurons
+        # Enhanced query for BANC neurons with folder information from in_register_with relationships
         query = """
-        MATCH (n:Individual)
-        WHERE n.short_form CONTAINS 'BANC' 
-           OR n.label CONTAINS 'BANC'
-           OR exists(n.BANC_id)
-        RETURN DISTINCT n.short_form as id, 
-               n.label as name, 
-               coalesce(n.BANC_id, n.short_form) as banc_id,
-               'ready' as status
-        ORDER BY n.short_form
+        MATCH (s:Site {short_form:'BANC626'})<-[c:hasDbXref]-(i:Individual)<-[:depicts]-(ic:Individual)-[r:in_register_with]->(tc:Template)-[:depicts]-(t:Template) 
+        RETURN c.accession[0] as banc_id,
+               i.short_form as vfb_id,
+               t.short_form as template_id,
+               r.folder[0] as folder_path,
+               r.filename as filename,
+               i.label as name
+        ORDER BY c.accession[0]
         """
         
         if limit:
@@ -68,97 +67,125 @@ def get_vfb_banc_neurons(limit=None):
         results = vfb.neo_query_wrapper(query)
         
         if not results:
-            # Fallback: Look for any Individual nodes that might be BANC neurons
-            print("No BANC-specific neurons found, trying broader search...")
+            # Fallback: Try broader search for BANC references
+            print("No BANC626 site references found, trying broader BANC search...")
             query = """
-            MATCH (n:Individual)
-            WHERE n.short_form =~ '.*[0-9]{15,}.*'  // Long numeric IDs typical of BANC
-            RETURN n.short_form as id, 
-                   n.label as name,
-                   n.short_form as banc_id,
-                   'ready' as status
-            ORDER BY n.short_form
+            MATCH (s:Site)<-[c:hasDbXref]-(i:Individual)<-[:depicts]-(ic:Individual)-[r:in_register_with]->(tc:Template)-[:depicts]-(t:Template) 
+            WHERE s.short_form CONTAINS 'BANC' OR c.accession[0] =~ '720575941.*'
+            RETURN c.accession[0] as banc_id,
+                   i.short_form as vfb_id,
+                   t.short_form as template_id,
+                   r.folder[0] as folder_path,
+                   r.filename as filename,
+                   coalesce(i.label, 'BANC Neuron') as name
+            ORDER BY c.accession[0]
             """
             if limit:
                 query += f" LIMIT {limit}"
             results = vfb.neo_query_wrapper(query)
         
         if not results:
-            # Generate test data with real BANC neuron IDs for development
-            print("No neurons found in VFB, generating test data with known BANC IDs...")
+            # Generate test data with proper folder structure for development
+            print("No neurons found in VFB, generating test data with known BANC IDs and folder paths...")
             test_neurons = [
-                '720575941350274352',
-                '720575941350334256', 
-                '720575941350274112',
-                '720575941350273792',
-                '720575941350273472'
+                {
+                    'banc_id': '720575941350274352', 
+                    'vfb_id': 'VFB_00105fa2',
+                    'template_id': 'VFB_00101567',
+                    'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/5fa2/VFB_00101567/'
+                },
+                {
+                    'banc_id': '720575941350334256', 
+                    'vfb_id': 'VFB_00105fb1',
+                    'template_id': 'VFB_00101567',
+                    'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/5fb1/VFB_00101567/'
+                },
+                {
+                    'banc_id': '720575941350274112', 
+                    'vfb_id': 'VFB_00106000',
+                    'template_id': 'VFB_00200000',  # VNC template example
+                    'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/6000/VFB_00200000/'
+                }
             ]
             
             results = []
-            for i, neuron_id in enumerate(test_neurons):
+            for i, neuron_data in enumerate(test_neurons):
                 if limit and i >= limit:
                     break
-                results.append({
-                    'id': f'BANC_{neuron_id}',
-                    'name': f'BANC Neuron {neuron_id}',
-                    'banc_id': neuron_id,
-                    'status': 'ready'
-                })
+                results.append(neuron_data)
         
-        # Convert to list format and extract BANC IDs
+        # Convert to list format and extract folder paths
         neurons = []
         for record in results:
-            # Extract numeric BANC ID from various possible formats
-            banc_id = record.get('banc_id', record.get('id', ''))
+            banc_id = str(record.get('banc_id', ''))
+            vfb_id = record.get('vfb_id', '')
+            template_id = record.get('template_id', 'VFB_00101567')
+            folder_path = record.get('folder_path', '')
             
-            # Clean up the ID to get just the numeric part
-            import re
-            numeric_match = re.search(r'(\d{15,})', str(banc_id))
-            if numeric_match:
-                clean_banc_id = numeric_match.group(1)
+            # Extract template short_form from folder path if needed
+            if folder_path and template_id:
+                # The template folder name is the template_id (e.g., VFB_00101567)
+                template_folder = template_id
             else:
-                clean_banc_id = str(banc_id).replace('BANC_', '').replace('VFB_', '')
+                # Default to JRC2018U template
+                template_folder = 'VFB_00101567'
             
             neurons.append({
-                'id': clean_banc_id,
-                'vfb_id': record.get('id', f'VFB_{clean_banc_id}'),
-                'name': record.get('name', f'BANC Neuron {clean_banc_id}'),
+                'id': banc_id,
+                'vfb_id': vfb_id,
+                'name': record.get('name', f'BANC Neuron {banc_id}'),
+                'template_id': template_id,
+                'folder_path': folder_path,
+                'template_folder': template_folder,
                 'status': 'ready'
             })
         
-        print(f"Found {len(neurons)} BANC neurons in VFB database")
+        print(f"Found {len(neurons)} BANC neurons with folder organization")
+        for neuron in neurons[:5]:  # Show first 5
+            print(f"  - {neuron['id']}: {neuron['name']} (template: {neuron['template_folder']})")
+        if len(neurons) > 5:
+            print(f"  ... and {len(neurons) - 5} more")
+        
         return neurons
         
     except Exception as e:
         print(f"Error querying VFB database: {e}")
         print("Creating sample test data with known BANC neuron IDs...")
         
-        # Return test data with real BANC neuron IDs for development
+        # Return test data with folder structure for development
         test_neurons = [
-            '720575941350274352',  # Known working BANC neuron
-            '720575941350334256', 
-            '720575941350274112',
-            '720575941350273792',
-            '720575941350273472'
-        ]
-        
-        neurons = []
-        for i, neuron_id in enumerate(test_neurons):
-            if limit and i >= limit:
-                break
-            neurons.append({
-                'id': neuron_id,
-                'vfb_id': f'VFB_BANC_{neuron_id}',
-                'name': f'Test BANC Neuron {neuron_id}',
+            {
+                'id': '720575941350274352',
+                'vfb_id': 'VFB_00105fa2',
+                'name': 'Test BANC Neuron 1',
+                'template_id': 'VFB_00101567',
+                'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/5fa2/VFB_00101567/',
+                'template_folder': 'VFB_00101567',
                 'status': 'ready'
-            })
-        
-        return neurons
-        return [
-            {'id': 'VFB_test_001', 'name': 'Test BANC Neuron 1', 'status': 'ready'},
-            {'id': 'VFB_test_002', 'name': 'Test BANC Neuron 2', 'status': 'ready'},
-            {'id': 'VFB_test_003', 'name': 'Test BANC Neuron 3', 'status': 'ready'},
+            },
+            {
+                'id': '720575941350334256',
+                'vfb_id': 'VFB_00105fb1',
+                'name': 'Test BANC Neuron 2',
+                'template_id': 'VFB_00101567',
+                'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/5fb1/VFB_00101567/',
+                'template_folder': 'VFB_00101567',
+                'status': 'ready'
+            },
+            {
+                'id': '720575941350274112',
+                'vfb_id': 'VFB_00106000',
+                'name': 'Test BANC Neuron 3',
+                'template_id': 'VFB_00200000',
+                'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/6000/VFB_00200000/',
+                'template_folder': 'VFB_00200000',
+                'status': 'ready'
+            }
         ]
+        
+        if limit:
+            return test_neurons[:limit]
+        return test_neurons
 
 def get_banc_626_skeleton(segment_id, output_dir='banc_output'):
     """
