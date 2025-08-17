@@ -222,3 +222,4 @@ vfb_banc_data/
 banc_output/
 test_mesh/
 .DS_Store
+full_test_output/
