@@ -6,37 +6,30 @@ numpy>=1.20.0
 navis[all]>=1.6.0
 flybrains>=0.3.0
 
+# VFB database connectivity
+vfb-connect>=2.0.0
+neo4j>=5.0.0
+
+# Google Cloud SDK for public BANC data access
+google-cloud-storage>=2.10.0
+
 # BANC coordinate transformations
 # Note: Install BANC package manually with:
 # git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git
 # cd the-BANC-fly-connectome && pip install -e .
 git+https://github.com/jasper-tms/pytransformix.git
 
-# VFB database connectivity
-vfb-connect>=2.0.0
-neo4j>=5.0.0
-
-# Google Cloud SDK for public BANC data
-google-cloud-storage>=2.10.0
-
-# Mesh processing and volume output
+# Mesh processing and file formats
 trimesh>=3.20.0
 pymeshlab>=2022.2
 scikit-image>=0.21.0
 nibabel>=5.1.0
-
-# R integration (optional but recommended)
-rpy2>=3.5.0
-
-# Additional dependencies that might be needed
-requests>=2.25.0
-matplotlib>=3.5.0
-scikit-image>=0.19.0
-trimesh>=3.15.0
-h5py>=3.7.0
-
-# For NRRD file handling
 nrrd>=0.4.0
 
-# For mesh processing
-pymeshlab>=2022.2
+# Additional utilities
+requests>=2.25.0
+matplotlib>=3.5.0
+h5py>=3.7.0
+
+# Optional: R integration for advanced analysis
+rpy2>=3.5.0

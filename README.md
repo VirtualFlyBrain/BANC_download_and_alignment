@@ -1,8 +1,21 @@
-# BANC Production Pipeline
+# BANC Data Processing Pipeline
 
 ## Overview
 
-This repository contains the complete production pipeline for processing BANC (Brain and Nerve Cord) fly connectome data for integration with Virtual Fly Brain (VFB). The pipeline downloads high-quality neuron data from the public BANC dataset, transforms coordinates to appropriate template spaces, and generates standardized file formats for VFB.
+This repository contains the production pipeline for processing BANC (Brain and Nerve Cord) fly connectome data for integration with Virtual Fly Brain (VFB). The pipeline downloads high-quality neuron data from the public BANC dataset, transforms coordinates to appropriate template spaces, and generates standardized file formats for VFB.
+
+## Quick Start
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Basic usage - process a few neurons for testing
+python run_full_banc_production.py --limit 10 --dry-run
+
+# Production usage - process all neurons
+python run_full_banc_production.py --formats swc,obj,nrrd
+```
 
 ## Features
 
@@ -96,63 +109,54 @@ python run_full_banc_production.py --output-dir /path/to/output
 
 ### Environment Configuration
 
-```bash
-# Local development (default)
-export DATA_FOLDER=/Users/user/project/data/
+For production deployment, set the data folder environment variable:
 
-# Jenkins production
+```bash
+# Local development (default - uses current directory)
+python run_full_banc_production.py --limit 5
+
+# Production deployment (Jenkins)
 export DATA_FOLDER=/IMAGE_WRITE/
+python run_full_banc_production.py --formats swc,obj,nrrd
 ```
 
-## Technical Details
-
-### Coordinate Spaces
-
-- **Input**: BANC space (nanometers)
-- **Intermediate**: JRC2018F space (micrometers)
-- **Output**: JRC2018U (brain) or JRCVNC2018U (VNC) space (micrometers)
-
-### Template Detection
-
-Neurons are automatically classified as brain or VNC based on coordinate analysis and VFB database template mappings.
-
-### Data Sources
-
-- **BANC Skeletons**: `gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_skeletons/swcs-from-pcg-skel/`
-- **BANC Meshes**: `gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_meshes/meshes/`
-- **VFB Database**: Neo4j database for neuron organization and template mapping
-
+See [ENVIRONMENT_CONFIG.md](ENVIRONMENT_CONFIG.md) for detailed environment setup.
 ## Installation
 
 ### Prerequisites
 
-```bash
-# Python environment
-pip install -r requirements.txt
+1. **Python Environment**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-# Google Cloud SDK (for data download)
-brew install google-cloud-sdk  # macOS
-# or apt-get install google-cloud-sdk  # Linux
+2. **Google Cloud SDK** (for BANC data access):
+   ```bash
+   # macOS
+   brew install google-cloud-sdk
+   
+   # Linux
+   apt-get install google-cloud-sdk
+   ```
 
-# Optional: BANC transformation tools
-git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git
-cd the-BANC-fly-connectome && pip install -e .
-pip install git+https://github.com/jasper-tms/pytransformix.git
-```
+3. **Optional: BANC Transformation Tools**:
+   ```bash
+   git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git
+   cd the-BANC-fly-connectome && pip install -e .
+   pip install git+https://github.com/jasper-tms/pytransformix.git
+   ```
 
-### Dependencies
+## Key Dependencies
 
-Key Python packages:
-
-- `navis`: Neuron analysis and visualization
-- `vfb_connect`: VFB database connectivity
+- `navis[all]`: Neuron analysis and visualization
+- `vfb_connect`: VFB database connectivity  
 - `pynrrd`: NRRD file format support
 - `flybrains`: Template brain registration
 - `pandas`, `numpy`: Data processing
 
 ## Monitoring and Logging
 
-The pipeline provides comprehensive logging:
+The pipeline provides comprehensive logging with progress indicators:
 
 ```text
 2025-08-17 16:07:52,466 - INFO - 🧠 Processing BANC neuron: 720575941559970319
@@ -162,30 +166,19 @@ The pipeline provides comprehensive logging:
 2025-08-17 16:08:03,910 - INFO -     ✅ NRRD (from mesh): volume.nrrd
 ```
 
-## Production Deployment
+Log files are written to `banc_production.log` in the working directory.
 
-### Jenkins Integration
+## Documentation
 
-The pipeline is designed for Jenkins production deployment:
-
-1. Set `DATA_FOLDER=/IMAGE_WRITE/`
-2. Run with appropriate limits and format selection
-3. Monitor logs for processing status
-4. Output files are organized for VFB integration
-
-### Error Handling
-
-- Automatic fallback for missing mesh data (uses skeleton-based mesh)
-- Resume capability from partial runs
-- Comprehensive error logging and recovery
-- Skip existing files to avoid reprocessing
+- **[Environment Configuration](ENVIRONMENT_CONFIG.md)**: Environment setup and deployment configuration
+- **[Technical Details](TECHNICAL_DETAILS.md)**: Detailed technical specifications and architecture
+- **[License](LICENSE)**: License information
 
 ## Quality Metrics
 
 Recent processing results:
-
 - **Mesh Quality**: 70K+ vertices, 150K+ triangles per neuron
-- **File Sizes**: SWC (4KB), OBJ (6MB), NRRD (224KB)
+- **File Sizes**: SWC (4KB), OBJ (6MB), NRRD (224KB)  
 - **Processing Speed**: ~15 seconds per neuron
 - **Success Rate**: 100% with fallback mechanisms
 
