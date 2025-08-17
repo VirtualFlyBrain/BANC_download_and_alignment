@@ -408,7 +408,7 @@ class BANCProductionProcessor:
                 elif fmt == 'nrrd':
                     # NRRD volume from OBJ mesh with proper metadata
                     obj_path = output_paths.get('obj')
-                    if obj_path and obj_path in created_files:
+                    if obj_path and 'obj' in created_files:
                         # Use the OBJ file we just created
                         if self.create_nrrd_from_obj(obj_path, output_path, template_space):
                             created_files[fmt] = str(output_path)
