@@ -174,14 +174,17 @@ class BANCProductionProcessor:
         
         return template_mappings.get(folder_short_form, 'JRC2018U')  # Default to brain
     
-    def get_output_paths(self, neuron_id, folder_short_form):
-        """Generate output file paths for a neuron based on VFB folder."""
-        # Get or create the folder directory
-        folder_dir = self.get_or_create_folder_directory(folder_short_form)
+    def get_output_paths(self, neuron_id, local_folder_path):
+        """Generate output file paths for a neuron based on VFB local folder structure."""
+        # Create full directory path under DATA_FOLDER using VFB structure
+        # local_folder_path is like: VFB/i/0010/5fa2/VFB_00101567
+        # Result: $DATA_FOLDER/VFB/i/0010/5fa2/VFB_00101567/BANC_{neuron_id}/
+        vfb_dir = self.output_dir / local_folder_path
+        vfb_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create neuron-specific subdirectory using VFB short_form format
-        neuron_dir = folder_dir / f"BANC_{neuron_id}"
-        neuron_dir.mkdir(exist_ok=True)
+        # Create neuron-specific subdirectory
+        neuron_dir = vfb_dir / f"BANC_{neuron_id}"
+        neuron_dir.mkdir(parents=True, exist_ok=True)
         
         paths = {}
         for fmt in self.formats:
@@ -262,10 +265,12 @@ class BANCProductionProcessor:
         
         # Get VFB folder information from database
         folder_short_form = neuron_info.get('template_folder', 'VFB_00101567')  # Default to JRC2018U
+        local_folder_path = neuron_info.get('local_folder_path', f'VFB/i/unknown/{folder_short_form}')
         template_space = self.get_template_space_from_folder(folder_short_form)
         
         logger.info(f"🧠 Processing BANC neuron: {neuron_id}")
         logger.info(f"  📁 VFB folder: {folder_short_form} → {template_space}")
+        logger.info(f"  📂 Local path: {local_folder_path}")
         
         try:
             # Step 1: Download skeleton from public BANC data
@@ -278,8 +283,8 @@ class BANCProductionProcessor:
             
             logger.info(f"  ✅ Downloaded: {len(skeleton.nodes)} nodes")
             
-            # Step 2: Check if files already exist (using folder-based paths)
-            output_paths = self.get_output_paths(neuron_id, folder_short_form)
+            # Step 2: Check if files already exist (using VFB folder structure)
+            output_paths = self.get_output_paths(neuron_id, local_folder_path)
             if self.files_exist(output_paths):
                 logger.info(f"  ⏭️  Files already exist, skipping")
                 return {'success': True, 'skipped': True, 'files': output_paths}

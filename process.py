@@ -122,13 +122,20 @@ def get_vfb_banc_neurons(limit=None):
             template_id = record.get('template_id', 'VFB_00101567')
             folder_path = record.get('folder_path', '')
             
-            # Extract template short_form from folder path if needed
-            if folder_path and template_id:
-                # The template folder name is the template_id (e.g., VFB_00101567)
-                template_folder = template_id
+            # Parse folder URL to extract local filesystem path
+            if folder_path and 'virtualflybrain.org/data/' in folder_path:
+                # Extract path after /data/ from URL
+                # http://www.virtualflybrain.org/data/VFB/i/0010/5fa2/VFB_00101567/
+                # becomes: VFB/i/0010/5fa2/VFB_00101567/
+                url_parts = folder_path.split('/data/')
+                if len(url_parts) > 1:
+                    local_folder_path = url_parts[1].rstrip('/')  # Remove trailing slash
+                else:
+                    # Fallback to template-based path
+                    local_folder_path = f'VFB/i/{vfb_id[-4:]}/{template_id}'
             else:
-                # Default to JRC2018U template
-                template_folder = 'VFB_00101567'
+                # Default structure for missing folder_path
+                local_folder_path = f'VFB/i/{vfb_id[-4:] if len(vfb_id) >= 4 else "unknown"}/{template_id}'
             
             neurons.append({
                 'id': banc_id,
@@ -136,7 +143,8 @@ def get_vfb_banc_neurons(limit=None):
                 'name': record.get('name', f'BANC Neuron {banc_id}'),
                 'template_id': template_id,
                 'folder_path': folder_path,
-                'template_folder': template_folder,
+                'local_folder_path': local_folder_path,  # Key addition for filesystem organization
+                'template_folder': template_id,  # Keep for backward compatibility
                 'status': 'ready'
             })
         
@@ -160,6 +168,7 @@ def get_vfb_banc_neurons(limit=None):
                 'name': 'Test BANC Neuron 1',
                 'template_id': 'VFB_00101567',
                 'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/5fa2/VFB_00101567/',
+                'local_folder_path': 'VFB/i/0010/5fa2/VFB_00101567',
                 'template_folder': 'VFB_00101567',
                 'status': 'ready'
             },
@@ -169,6 +178,7 @@ def get_vfb_banc_neurons(limit=None):
                 'name': 'Test BANC Neuron 2',
                 'template_id': 'VFB_00101567',
                 'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/5fb1/VFB_00101567/',
+                'local_folder_path': 'VFB/i/0010/5fb1/VFB_00101567',
                 'template_folder': 'VFB_00101567',
                 'status': 'ready'
             },
@@ -178,6 +188,7 @@ def get_vfb_banc_neurons(limit=None):
                 'name': 'Test BANC Neuron 3',
                 'template_id': 'VFB_00200000',
                 'folder_path': 'http://www.virtualflybrain.org/data/VFB/i/0010/6000/VFB_00200000/',
+                'local_folder_path': 'VFB/i/0010/6000/VFB_00200000',
                 'template_folder': 'VFB_00200000',
                 'status': 'ready'
             }
