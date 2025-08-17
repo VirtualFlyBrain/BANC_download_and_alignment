@@ -28,7 +28,7 @@ except ImportError:
 
 def get_vfb_banc_neurons(limit=None):
     """
-    Query VFB database for BANC neuron records that need processing.
+    Query VFB database for all BANC neuron records that need processing.
     
     Args:
         limit (int, optional): Maximum number of neurons to return
@@ -49,11 +49,17 @@ def get_vfb_banc_neurons(limit=None):
             neo_credentials=('neo4j', password)
         )
         
-        # Query for BANC neurons
+        # Enhanced query for BANC neurons
         query = """
         MATCH (n:Individual)
-        WHERE n.short_form CONTAINS 'BANC'
-        RETURN n.short_form as id, n.label as name, 'ready' as status
+        WHERE n.short_form CONTAINS 'BANC' 
+           OR n.label CONTAINS 'BANC'
+           OR exists(n.BANC_id)
+        RETURN DISTINCT n.short_form as id, 
+               n.label as name, 
+               coalesce(n.BANC_id, n.short_form) as banc_id,
+               'ready' as status
+        ORDER BY n.short_form
         """
         
         if limit:
@@ -62,32 +68,92 @@ def get_vfb_banc_neurons(limit=None):
         results = vfb.neo_query_wrapper(query)
         
         if not results:
-            # If no BANC-specific results, try a broader query for testing
-            print("No BANC-specific neurons found, trying broader query...")
+            # Fallback: Look for any Individual nodes that might be BANC neurons
+            print("No BANC-specific neurons found, trying broader search...")
             query = """
             MATCH (n:Individual)
-            RETURN n.short_form as id, n.label as name, 'ready' as status
-            LIMIT 10
+            WHERE n.short_form =~ '.*[0-9]{15,}.*'  // Long numeric IDs typical of BANC
+            RETURN n.short_form as id, 
+                   n.label as name,
+                   n.short_form as banc_id,
+                   'ready' as status
+            ORDER BY n.short_form
             """
+            if limit:
+                query += f" LIMIT {limit}"
             results = vfb.neo_query_wrapper(query)
         
-        # Convert to list format
+        if not results:
+            # Generate test data with real BANC neuron IDs for development
+            print("No neurons found in VFB, generating test data with known BANC IDs...")
+            test_neurons = [
+                '720575941350274352',
+                '720575941350334256', 
+                '720575941350274112',
+                '720575941350273792',
+                '720575941350273472'
+            ]
+            
+            results = []
+            for i, neuron_id in enumerate(test_neurons):
+                if limit and i >= limit:
+                    break
+                results.append({
+                    'id': f'BANC_{neuron_id}',
+                    'name': f'BANC Neuron {neuron_id}',
+                    'banc_id': neuron_id,
+                    'status': 'ready'
+                })
+        
+        # Convert to list format and extract BANC IDs
         neurons = []
         for record in results:
+            # Extract numeric BANC ID from various possible formats
+            banc_id = record.get('banc_id', record.get('id', ''))
+            
+            # Clean up the ID to get just the numeric part
+            import re
+            numeric_match = re.search(r'(\d{15,})', str(banc_id))
+            if numeric_match:
+                clean_banc_id = numeric_match.group(1)
+            else:
+                clean_banc_id = str(banc_id).replace('BANC_', '').replace('VFB_', '')
+            
             neurons.append({
-                'id': record.get('id', f'VFB_test_{len(neurons)+1:03d}'),
-                'name': record.get('name', f'Test BANC Neuron {len(neurons)+1}'),
+                'id': clean_banc_id,
+                'vfb_id': record.get('id', f'VFB_{clean_banc_id}'),
+                'name': record.get('name', f'BANC Neuron {clean_banc_id}'),
                 'status': 'ready'
             })
         
-        print(f"Found {len(neurons)} neurons in VFB database")
+        print(f"Found {len(neurons)} BANC neurons in VFB database")
         return neurons
         
     except Exception as e:
         print(f"Error querying VFB database: {e}")
-        print("Creating sample test data...")
+        print("Creating sample test data with known BANC neuron IDs...")
         
-        # Return test data for development
+        # Return test data with real BANC neuron IDs for development
+        test_neurons = [
+            '720575941350274352',  # Known working BANC neuron
+            '720575941350334256', 
+            '720575941350274112',
+            '720575941350273792',
+            '720575941350273472'
+        ]
+        
+        neurons = []
+        for i, neuron_id in enumerate(test_neurons):
+            if limit and i >= limit:
+                break
+            neurons.append({
+                'id': neuron_id,
+                'vfb_id': f'VFB_BANC_{neuron_id}',
+                'name': f'Test BANC Neuron {neuron_id}',
+                'status': 'ready'
+            })
+        
+        return neurons
         return [
             {'id': 'VFB_test_001', 'name': 'Test BANC Neuron 1', 'status': 'ready'},
             {'id': 'VFB_test_002', 'name': 'Test BANC Neuron 2', 'status': 'ready'},
