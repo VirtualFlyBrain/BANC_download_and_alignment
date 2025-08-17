@@ -197,71 +197,122 @@ class BANCProductionProcessor:
         
         return all(path.exists() and path.stat().st_size > 0 for path in paths.values())
     
-    def create_nrrd_from_obj(self, obj_path, output_path, template_space, voxel_size_um=None):
+    def create_nrrd_from_obj(self, obj_path, output_path, template_space, neuron_id):
         """Create NRRD volumetric file from OBJ mesh with proper template metadata."""
         try:
             import nrrd
             import navis
+            import numpy as np
+            import pandas as pd
+            from process import transform_skeleton_coordinates
             
             # Determine voxel size based on template space
-            if voxel_size_um is None:
-                if 'JRC2018U' in template_space:
-                    # JRC2018U standard voxel size: 0.622 x 0.622 x 0.622 µm
-                    voxel_size = [0.622, 0.622, 0.622]
-                    space = 'left-posterior-superior'
-                else:  # VNC template (JRCVNC2018U)
-                    # JRCVNC2018U standard voxel size: 0.4 x 0.4 x 0.4 µm  
-                    voxel_size = [0.4, 0.4, 0.4]
-                    space = 'left-posterior-superior'
-            else:
-                voxel_size = voxel_size_um
-                space = 'left-posterior-superior'
+            if 'JRC2018U' in template_space:
+                # JRC2018U standard voxel size: 0.622 x 0.622 x 0.622 µm
+                voxel_size = [0.622, 0.622, 0.622]
+            else:  # VNC template (JRCVNC2018U)
+                # JRCVNC2018U standard voxel size: 0.4 x 0.4 x 0.4 µm  
+                voxel_size = [0.4, 0.4, 0.4]
+            
+            space = 'left-posterior-superior'
             
             # Load the OBJ mesh with navis
             logger.info(f"    Loading OBJ mesh: {obj_path}")
             mesh = navis.read_mesh(str(obj_path))
             
-            # Convert mesh to volumetric representation
-            logger.info(f"    Converting mesh to volume with voxel size {voxel_size} µm")
+            # The mesh coordinates are in BANC space - we need to transform them
+            # to match the coordinate space used for the skeleton
+            logger.info(f"    Transforming mesh coordinates from BANC to {template_space}")
             
-            # Get mesh bounds
+            # Create a temporary skeleton from a subset of mesh vertices to get transformation
             vertices = mesh.vertices
-            min_coords = vertices.min(axis=0)
-            max_coords = vertices.max(axis=0)
             
-            # Calculate volume dimensions in voxels
+            # Sample vertices to create a representative skeleton for coordinate transformation
+            num_sample_points = min(1000, len(vertices))  # Sample max 1000 vertices
+            sample_indices = np.random.choice(len(vertices), num_sample_points, replace=False)
+            sample_vertices = vertices[sample_indices]
+            
+            # Create a minimal skeleton from sampled vertices
+            # Convert coordinates from µm to nm for BANC transform (BANC uses nm coordinates)
+            sample_vertices_nm = sample_vertices * 1000  # Convert µm to nm
+            
+            # Create temporary skeleton nodes DataFrame
+            temp_nodes = pd.DataFrame({
+                'node_id': range(len(sample_vertices_nm)),
+                'x': sample_vertices_nm[:, 0],
+                'y': sample_vertices_nm[:, 1], 
+                'z': sample_vertices_nm[:, 2],
+                'radius': 1.0,
+                'parent_id': -1
+            })
+            
+            # Create temporary skeleton for transformation
+            temp_skeleton = navis.TreeNeuron(temp_nodes, units='nanometers')
+            
+            # Transform the sample skeleton to get the transformation parameters
+            transformed_skeleton = transform_skeleton_coordinates(temp_skeleton, 'BANC', 'VFB')
+            
+            # Get transformation vectors from sample points
+            original_coords_um = sample_vertices  # Original in µm
+            transformed_coords_um = transformed_skeleton.nodes[['x', 'y', 'z']].values  # Transformed in µm
+            
+            # Calculate transformation offset and scale (simple approach)
+            coord_offset = np.mean(transformed_coords_um - original_coords_um, axis=0)
+            coord_scale = np.mean(transformed_coords_um / original_coords_um, axis=0)
+            
+            logger.info(f"    Coordinate offset: {coord_offset}")
+            logger.info(f"    Coordinate scale: {coord_scale}")
+            
+            # Apply transformation to all mesh vertices
+            transformed_vertices = vertices * coord_scale + coord_offset
+            
+            # Get bounds of transformed mesh
+            min_coords = transformed_vertices.min(axis=0)
+            max_coords = transformed_vertices.max(axis=0)
+            
+            # Calculate volume dimensions in voxels (limit to reasonable size)
             volume_size_um = max_coords - min_coords
+            max_size_um = 500  # Limit to 500µm in any dimension
+            
+            if np.any(volume_size_um > max_size_um):
+                logger.warning(f"    Large volume size: {volume_size_um} µm, limiting to {max_size_um} µm")
+                # Scale down coordinates to fit within reasonable bounds
+                scale_factor = max_size_um / np.max(volume_size_um)
+                transformed_vertices = transformed_vertices * scale_factor
+                min_coords = transformed_vertices.min(axis=0)
+                max_coords = transformed_vertices.max(axis=0)
+                volume_size_um = max_coords - min_coords
+            
             volume_size_voxels = np.ceil(volume_size_um / voxel_size).astype(int)
             
             logger.info(f"    Volume size: {volume_size_um} µm = {volume_size_voxels} voxels")
             
-            # Create volume using navis mesh voxelization
-            try:
-                # Use navis to voxelize the mesh
-                volume = navis.voxelize(mesh, pitch=voxel_size, counts=False)
-                
-                # Convert to binary uint8
-                volume_array = volume.values.astype(np.uint8) * 255
-                
-            except Exception as e:
-                logger.warning(f"    Navis voxelization failed: {e}, using simple approach")
-                
-                # Fallback: create volume from vertex positions
-                volume_array = np.zeros(volume_size_voxels, dtype=np.uint8)
-                
-                # Mark voxels containing vertices
-                for vertex in vertices:
-                    voxel_coord = ((vertex - min_coords) / voxel_size).astype(int)
-                    # Ensure coordinates are within bounds
-                    voxel_coord = np.clip(voxel_coord, 0, volume_size_voxels - 1)
-                    volume_array[tuple(voxel_coord)] = 255
+            # Create volume from transformed vertices
+            volume_array = np.zeros(volume_size_voxels, dtype=np.uint8)
+            
+            # Mark voxels containing vertices
+            voxel_coords = ((transformed_vertices - min_coords) / voxel_size).astype(int)
+            voxel_coords = np.clip(voxel_coords, 0, volume_size_voxels - 1)
+            
+            # Create a more filled volume by marking neighboring voxels too
+            for coord in voxel_coords:
+                x, y, z = coord
+                # Mark the voxel and its 6-connected neighbors
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        for dz in [-1, 0, 1]:
+                            nx, ny, nz = x + dx, y + dy, z + dz
+                            if (0 <= nx < volume_size_voxels[0] and 
+                                0 <= ny < volume_size_voxels[1] and 
+                                0 <= nz < volume_size_voxels[2]):
+                                volume_array[nx, ny, nz] = 255
             
             # NRRD header with proper template metadata
             header = {
                 'space': space,
                 'space directions': np.diag(voxel_size),
                 'space origin': min_coords,
-                'units': ['µm', 'µm', 'µm'],
+                'units': ['um', 'um', 'um'],  # Use 'um' instead of 'µm' to avoid encoding issues
                 'labels': ['x', 'y', 'z'],
                 'encoding': 'gzip',
                 'content': f'{template_space} neuron volume',
@@ -270,7 +321,9 @@ class BANCProductionProcessor:
             
             # Save NRRD with metadata
             nrrd.write(str(output_path), volume_array, header)
-            logger.info(f"    Created NRRD volume: {volume_array.shape} voxels, {voxel_size} µm/voxel")
+            
+            filled_voxels = np.count_nonzero(volume_array)
+            logger.info(f"    ✅ NRRD created: {volume_array.shape} voxels, {filled_voxels} filled, {voxel_size} µm/voxel")
             return True
             
         except ImportError:
@@ -410,7 +463,7 @@ class BANCProductionProcessor:
                     obj_path = output_paths.get('obj')
                     if obj_path and 'obj' in created_files:
                         # Use the OBJ file we just created
-                        if self.create_nrrd_from_obj(obj_path, output_path, template_space):
+                        if self.create_nrrd_from_obj(obj_path, output_path, template_space, neuron_id):
                             created_files[fmt] = str(output_path)
                             logger.info(f"    ✅ NRRD (from mesh): {output_path.name}")
                         else:
