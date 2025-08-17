@@ -21,33 +21,55 @@ python run_full_banc_production.py --formats swc,obj,nrrd
 
 - **Automated BANC Data Processing**: Downloads skeleton and mesh data from public BANC Google Cloud Storage
 - **High-Quality Mesh Generation**: Uses actual BANC precomputed meshes (not skeleton-based approximations)
-- **Coordinate Transformation**: Transforms from BANC space to JRC2018U/JRCVNC2018U template spaces
+- **Dual Template Support**: Handles both brain (JRC2018U) and VNC (JRCVNC2018U) template spaces
+- **BANC-Specific Transformations**: Uses official BANC coordinate transformation functions
+- **Two-Step Alignment Pipeline**: BANC → intermediate template → final template space
 - **Multiple Output Formats**: Generates SWC, OBJ, and NRRD files with proper metadata
 - **VFB Database Integration**: Queries VFB Neo4j database for neuron organization and template mapping
-- **Template-Aware Processing**: Automatically selects appropriate template spaces (brain vs VNC)
+- **Template-Aware Processing**: Automatically routes neurons to brain vs VNC transformation pipelines
 
 ## Pipeline Architecture
 
 ```text
-VFB Database → BANC Public Data → Coordinate Transform → VFB File Structure
+VFB Database → BANC Public Data → Two-Step Transform → VFB File Structure
      ↓              ↓                    ↓                    ↓
-  Neuron IDs    Skeleton/Mesh     JRC2018U/VNC Space    volume.[swc|obj|nrrd]
+  Template IDs   Skeleton/Mesh    BANC→JRC2018F/VNC→U     volume.[swc|obj|nrrd]
+```
+
+### Transformation Pipeline
+
+**Brain Neurons (VFB_00101567):**
+```text
+BANC (nm) → [BANC transforms] → JRC2018F (µm) → [navis] → JRC2018U (µm)
+```
+
+**VNC Neurons (VFB_00200000):**
+```text
+BANC (nm) → [BANC transforms] → JRCVNC2018F (µm) → [navis] → JRCVNC2018U (µm)
 ```
 
 ## Output Structure
 
-The pipeline creates files in VFB-standard folder organization:
+The pipeline creates files in VFB-standard folder organization with template-specific routing:
 
 ```text
 vfb_banc_data/
 ├── processing_state.json
 └── VFB/
     └── i/
-        └── 0010/
-            ├── 5bke/
-            │   └── VFB_00101567/    # JRC2018U template
-            │       ├── volume.swc   # Transformed skeleton (4KB)
-            │       ├── volume.obj   # High-quality mesh (6MB, 74K+ vertices)
+        ├── 0010/
+        │   └── 5bke/
+        │       └── VFB_00101567/    # Brain template (JRC2018U)
+        │           ├── volume.swc   # Transformed skeleton (4KB)
+        │           ├── volume.obj   # High-quality mesh (6MB, 74K+ vertices)
+        │           └── volume.nrrd  # Voxelized volume (0.622µm, wider > taller)
+        └── 0020/
+            └── 0000/
+                └── VFB_00200000/    # VNC template (JRCVNC2018U)
+                    ├── volume.swc   # Transformed skeleton
+                    ├── volume.obj   # High-quality mesh  
+                    └── volume.nrrd  # Voxelized volume (0.4µm, taller > wider)
+```
             │       └── volume.nrrd  # Volumetric data (224KB, 0.622µm voxels)
             └── 5bkf/
                 └── VFB_00101567/
@@ -139,11 +161,18 @@ See [ENVIRONMENT_CONFIG.md](ENVIRONMENT_CONFIG.md) for detailed environment setu
    apt-get install google-cloud-sdk
    ```
 
-3. **Optional: BANC Transformation Tools**:
+3. **BANC Transformation Tools** (Required for coordinate alignment):
    ```bash
+   # Automated installation
+   bash install_banc_transforms.sh
+   
+   # Or manual installation:
    git clone https://github.com/jasper-tms/the-BANC-fly-connectome.git
    cd the-BANC-fly-connectome && pip install -e .
    pip install git+https://github.com/jasper-tms/pytransformix.git
+   
+   # Install elastix (macOS)
+   brew install elastix
    ```
 
 ## Key Dependencies

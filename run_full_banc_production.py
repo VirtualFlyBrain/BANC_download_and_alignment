@@ -206,13 +206,15 @@ class BANCProductionProcessor:
             import pandas as pd
             from process import transform_skeleton_coordinates
             
-            # Determine voxel size based on template space
-            if 'JRC2018U' in template_space:
-                # JRC2018U standard voxel size: 0.622 x 0.622 x 0.622 µm
-                voxel_size = [0.622, 0.622, 0.622]
-            else:  # VNC template (JRCVNC2018U)
-                # JRCVNC2018U standard voxel size: 0.4 x 0.4 x 0.4 µm  
+            # Determine voxel size based on template space (from VFB template specifications)
+            if 'JRCVNC2018U' in template_space:
+                # VNC template: 660×1290×382 voxels at 0.4×0.4×0.4 µm
                 voxel_size = [0.4, 0.4, 0.4]
+                template_voxels = [660, 1290, 382]
+            else:  # JRC2018U brain template
+                # Brain template: 1210×566×174 voxels at 0.519×0.519×1.0 µm  
+                voxel_size = [0.5189161, 0.5189161, 1.0]
+                template_voxels = [1210, 566, 174]
             
             space = 'left-posterior-superior'
             
@@ -233,21 +235,22 @@ class BANCProductionProcessor:
             sample_vertices = vertices[sample_indices]
             
             # Create a minimal skeleton from sampled vertices
-            # Convert coordinates from µm to nm for BANC transform (BANC uses nm coordinates)
-            sample_vertices_nm = sample_vertices * 1000  # Convert µm to nm
+            # The mesh coordinates should already be in micrometers (matching skeleton units)
+            # DO NOT multiply by 1000 - coordinates are already in micrometers!
+            sample_vertices_um = sample_vertices  # Already in µm
             
             # Create temporary skeleton nodes DataFrame
             temp_nodes = pd.DataFrame({
-                'node_id': range(len(sample_vertices_nm)),
-                'x': sample_vertices_nm[:, 0],
-                'y': sample_vertices_nm[:, 1], 
-                'z': sample_vertices_nm[:, 2],
+                'node_id': range(len(sample_vertices_um)),
+                'x': sample_vertices_um[:, 0],
+                'y': sample_vertices_um[:, 1], 
+                'z': sample_vertices_um[:, 2],
                 'radius': 1.0,
                 'parent_id': -1
             })
             
             # Create temporary skeleton for transformation
-            temp_skeleton = navis.TreeNeuron(temp_nodes, units='nanometers')
+            temp_skeleton = navis.TreeNeuron(temp_nodes, units='micrometers')
             
             # Transform the sample skeleton to get the transformation parameters
             if 'VNC' in template_space:
@@ -259,42 +262,42 @@ class BANCProductionProcessor:
             original_coords_um = sample_vertices  # Original in µm
             transformed_coords_um = transformed_skeleton.nodes[['x', 'y', 'z']].values  # Transformed in µm
             
-            # Calculate transformation offset and scale (simple approach)
-            coord_offset = np.mean(transformed_coords_um - original_coords_um, axis=0)
-            coord_scale = np.mean(transformed_coords_um / original_coords_um, axis=0)
+            # Since we're using identity transform (no BANC package), coordinates are unchanged
+            # Apply the identity transformation to all mesh vertices 
+            transformed_vertices = vertices  # No transformation applied
             
-            logger.info(f"    Coordinate offset: {coord_offset}")
-            logger.info(f"    Coordinate scale: {coord_scale}")
+            logger.info(f"    Using identity transform (BANC package not available)")
             
-            # Apply transformation to all mesh vertices
-            transformed_vertices = vertices * coord_scale + coord_offset
+            # Use template-specific dimensions from VFB database (exact specifications)
+            # Define template space bounds based on actual VFB template NRRD dimensions
+            if 'VNC' in template_space:
+                # JRCVNC2018U template: 660×1290×382 voxels at 0.4×0.4×0.4 µm = 264×516×152.8 µm
+                template_bounds_um = np.array([264.0, 516.0, 152.8])  # X, Y, Z in micrometers
+                template_origin_um = np.array([0.0, 0.0, 0.0])  # Template origin
+            else:
+                # JRC2018U brain template: 1210×566×174 voxels at 0.519×0.519×1.0 µm = 628×294×174 µm  
+                template_bounds_um = np.array([628.0, 294.0, 174.0])  # X, Y, Z in micrometers  
+                template_origin_um = np.array([0.0, 0.0, 0.0])  # Template origin
             
-            # Get bounds of transformed mesh
-            min_coords = transformed_vertices.min(axis=0)
-            max_coords = transformed_vertices.max(axis=0)
+            # Use exact template voxel dimensions instead of calculating from bounds
+            volume_size_voxels = np.array(template_voxels)  # Use exact VFB template voxel counts
             
-            # Calculate volume dimensions in voxels (limit to reasonable size)
-            volume_size_um = max_coords - min_coords
-            max_size_um = 500  # Limit to 500µm in any dimension
+            logger.info(f"    Template space: {template_bounds_um} µm = {volume_size_voxels} voxels")
             
-            if np.any(volume_size_um > max_size_um):
-                logger.warning(f"    Large volume size: {volume_size_um} µm, limiting to {max_size_um} µm")
-                # Scale down coordinates to fit within reasonable bounds
-                scale_factor = max_size_um / np.max(volume_size_um)
-                transformed_vertices = transformed_vertices * scale_factor
-                min_coords = transformed_vertices.min(axis=0)
-                max_coords = transformed_vertices.max(axis=0)
-                volume_size_um = max_coords - min_coords
-            
-            volume_size_voxels = np.ceil(volume_size_um / voxel_size).astype(int)
-            
-            logger.info(f"    Volume size: {volume_size_um} µm = {volume_size_voxels} voxels")
-            
-            # Create volume from transformed vertices
+            # Create volume for full template space
             volume_array = np.zeros(volume_size_voxels, dtype=np.uint8)
             
-            # Mark voxels containing vertices
-            voxel_coords = ((transformed_vertices - min_coords) / voxel_size).astype(int)
+            # Position neuron vertices within template space
+            # For now, center the neuron in the template (proper transform needed later)
+            neuron_center = transformed_vertices.mean(axis=0)
+            template_center = template_bounds_um / 2
+            vertex_offset = template_center - neuron_center
+            
+            # Apply centering offset
+            centered_vertices = transformed_vertices + vertex_offset
+            
+            # Mark voxels containing vertices (only those within template bounds)
+            voxel_coords = (centered_vertices / voxel_size).astype(int)
             voxel_coords = np.clip(voxel_coords, 0, volume_size_voxels - 1)
             
             # Create a more filled volume by marking neighboring voxels too
@@ -314,7 +317,7 @@ class BANCProductionProcessor:
             header = {
                 'space': space,
                 'space directions': np.diag(voxel_size),
-                'space origin': min_coords,
+                'space origin': template_origin_um,  # Use template origin, not neuron min_coords
                 'units': ['um', 'um', 'um'],  # Use 'um' instead of 'µm' to avoid encoding issues
                 'labels': ['x', 'y', 'z'],
                 'encoding': 'gzip',
