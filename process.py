@@ -287,6 +287,176 @@ def get_banc_626_skeleton(segment_id, output_dir='banc_output'):
         return None
 
 
+def get_banc_626_mesh(segment_id, output_dir='banc_output'):
+    """
+    Download high-quality mesh data for a BANC neuron from the public Google Cloud Storage bucket.
+    These are the actual neuron meshes with full morphological detail, not generated from skeletons.
+    """
+    try:
+        import subprocess
+        import json
+        
+        print(f"Downloading high-quality mesh for segment ID: {segment_id} from BANC public data...")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # BANC mesh paths - first get the mesh manifest
+        manifest_path = f"gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_meshes/meshes/{segment_id}:0"
+        
+        # Download mesh manifest
+        temp_manifest = os.path.join(output_dir, f'temp_manifest_{segment_id}')
+        result = subprocess.run([
+            'gsutil', 'cp', manifest_path, temp_manifest
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"Mesh manifest not found for segment {segment_id}")
+            return None
+            
+        # Read the manifest to get fragment references
+        with open(temp_manifest, 'r') as f:
+            manifest = json.load(f)
+        
+        fragments = manifest.get('fragments', [])
+        if not fragments:
+            print(f"No mesh fragments found for segment {segment_id}")
+            os.remove(temp_manifest)
+            return None
+            
+        print(f"Found {len(fragments)} mesh fragments")
+        
+        # Download all mesh fragments
+        mesh_files = []
+        for fragment in fragments:
+            fragment_path = f"gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_meshes/meshes/{fragment}"
+            local_fragment = os.path.join(output_dir, f'mesh_fragment_{segment_id}_{fragment.split(":")[-1]}')
+            
+            result = subprocess.run([
+                'gsutil', 'cp', fragment_path, local_fragment
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                mesh_files.append(local_fragment)
+                print(f"Downloaded mesh fragment: {fragment}")
+            else:
+                print(f"Failed to download fragment: {fragment}")
+        
+        # Clean up manifest
+        os.remove(temp_manifest)
+        
+        if mesh_files:
+            print(f"Successfully downloaded {len(mesh_files)} mesh fragments")
+            return mesh_files
+        else:
+            print("No mesh fragments could be downloaded")
+            return None
+            
+    except Exception as e:
+        print(f"Error downloading mesh: {e}")
+        print("Make sure gsutil is installed: brew install google-cloud-sdk")
+        return None
+
+
+def convert_banc_mesh_to_obj(mesh_files, segment_id, output_dir='banc_output'):
+    """
+    Convert BANC binary mesh fragments to OBJ format.
+    These mesh files are in the Neuroglancer precomputed mesh format.
+    Format: vertex_count (uint32) + vertices (float32 x 3 per vertex) + triangle_indices (uint32 x 3 per triangle)
+    """
+    try:
+        import struct
+        
+        if not mesh_files:
+            print("No mesh files to convert")
+            return None
+            
+        print(f"Converting {len(mesh_files)} mesh fragments to OBJ format...")
+        
+        # Combined output OBJ file
+        obj_file = os.path.join(output_dir, f'{segment_id}.obj')
+        
+        vertices = []
+        faces = []
+        vertex_offset = 0
+        
+        for mesh_file in mesh_files:
+            print(f"Processing mesh fragment: {mesh_file}")
+            
+            with open(mesh_file, 'rb') as f:
+                data = f.read()
+            
+            # Parse Neuroglancer precomputed mesh format
+            # Format: vertex_count (uint32) + vertices + triangle_indices (no face count header)
+            
+            if len(data) < 8:
+                print(f"Mesh file too small: {mesh_file}")
+                continue
+                
+            # Read vertex count
+            vertex_count = struct.unpack('<I', data[0:4])[0]
+            print(f"  Vertices: {vertex_count}")
+            
+            # Read vertices (3 floats per vertex)
+            vertex_data_size = vertex_count * 3 * 4  # 3 floats * 4 bytes each
+            vertex_end = 4 + vertex_data_size
+            
+            if len(data) < vertex_end:
+                print(f"Invalid mesh data in {mesh_file}")
+                continue
+            
+            # Parse vertices
+            for i in range(vertex_count):
+                offset = 4 + (i * 12)  # 12 bytes per vertex (3 floats)
+                x, y, z = struct.unpack('<fff', data[offset:offset+12])
+                vertices.append((x, y, z))
+            
+            # Parse triangle indices (remaining data after vertices)
+            triangle_data = data[vertex_end:]
+            if len(triangle_data) % 12 == 0:  # Should be multiple of 12 (3 uint32 per triangle)
+                triangle_count = len(triangle_data) // 12
+                print(f"  Triangles: {triangle_count}")
+                
+                for i in range(triangle_count):
+                    offset = i * 12
+                    i1, i2, i3 = struct.unpack('<III', triangle_data[offset:offset+12])
+                    # Add vertex offset for multiple fragments and convert to 1-based indexing for OBJ
+                    faces.append((i1 + vertex_offset + 1, i2 + vertex_offset + 1, i3 + vertex_offset + 1))
+            else:
+                print(f"  Warning: Triangle data size not divisible by 12: {len(triangle_data)} bytes")
+            
+            vertex_offset += vertex_count
+            
+            # Clean up fragment file
+            os.remove(mesh_file)
+        
+        # Write OBJ file
+        with open(obj_file, 'w') as f:
+            f.write(f"# BANC neuron mesh: {segment_id}\n")
+            f.write(f"# Vertices: {len(vertices)}\n")
+            f.write(f"# Faces: {len(faces)}\n\n")
+            
+            # Write vertices
+            for x, y, z in vertices:
+                f.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
+            
+            f.write("\n")
+            
+            # Write faces
+            for i1, i2, i3 in faces:
+                f.write(f"f {i1} {i2} {i3}\n")
+        
+        print(f"OBJ file created: {obj_file}")
+        print(f"  Total vertices: {len(vertices)}")
+        print(f"  Total faces: {len(faces)}")
+        
+        return obj_file
+        
+    except Exception as e:
+        print(f"Error converting mesh to OBJ: {e}")
+        return None
+
+
 def get_banc_annotations(output_dir='banc_output'):
     """
     Download BANC neuron annotation files from the public Google Cloud Storage bucket.

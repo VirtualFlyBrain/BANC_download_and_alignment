@@ -31,6 +31,7 @@ from pathlib import Path
 from datetime import datetime
 import pandas as pd
 import numpy as np
+import navis
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import our processing functions
@@ -309,29 +310,77 @@ class BANCProductionProcessor:
                 
                 if fmt == 'swc':
                     # SWC format with proper units (micrometers)
-                    import navis
                     navis.write_swc(transformed, str(output_path))
                     created_files[fmt] = str(output_path)
                     logger.info(f"    ✅ SWC: {output_path.name}")
                     
                 elif fmt == 'obj':
-                    # OBJ 3D mesh format
+                    # Download actual BANC mesh data (high-quality)
                     try:
-                        mesh = navis.mesh_neuron(transformed)
-                        with open(output_path, 'w') as f:
-                            # Simple OBJ format
-                            vertices = mesh.vertices
-                            faces = mesh.faces
-                            
-                            for v in vertices:
-                                f.write(f"v {v[0]} {v[1]} {v[2]}\n")
-                            for face in faces:
-                                f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+                        # Import mesh functions
+                        from process import get_banc_626_mesh, convert_banc_mesh_to_obj
                         
-                        created_files[fmt] = str(output_path)
-                        logger.info(f"    ✅ OBJ: {output_path.name}")
+                        # Get output directory from the output path
+                        output_dir = output_path.parent
+                        
+                        # Download mesh fragments from BANC public bucket
+                        mesh_files = get_banc_626_mesh(neuron_id, str(output_dir))
+                        
+                        if mesh_files:
+                            # Convert binary mesh data to OBJ format
+                            obj_file = convert_banc_mesh_to_obj(mesh_files, neuron_id, str(output_dir))
+                            
+                            if obj_file and os.path.exists(obj_file):
+                                # Move to correct output path if needed
+                                if obj_file != str(output_path):
+                                    import shutil
+                                    shutil.move(obj_file, str(output_path))
+                                
+                                created_files[fmt] = str(output_path)
+                                logger.info(f"    ✅ OBJ (BANC mesh): {output_path.name}")
+                            else:
+                                logger.warning(f"    ⚠️  BANC mesh conversion failed, falling back to skeleton")
+                                # Fallback to skeleton-based mesh
+                                mesh = navis.conversion.tree2meshneuron(transformed, tube_points=8, radius_scale_factor=1.0)
+                                with open(output_path, 'w') as f:
+                                    vertices = mesh.vertices
+                                    faces = mesh.faces
+                                    for v in vertices:
+                                        f.write(f"v {v[0]} {v[1]} {v[2]}\n")
+                                    for face in faces:
+                                        f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+                                created_files[fmt] = str(output_path)
+                                logger.info(f"    ✅ OBJ (skeleton fallback): {output_path.name}")
+                        else:
+                            logger.warning(f"    ⚠️  BANC mesh not found, using skeleton")
+                            # Fallback to skeleton-based mesh
+                            mesh = navis.conversion.tree2meshneuron(transformed, tube_points=8, radius_scale_factor=1.0)
+                            with open(output_path, 'w') as f:
+                                vertices = mesh.vertices
+                                faces = mesh.faces
+                                for v in vertices:
+                                    f.write(f"v {v[0]} {v[1]} {v[2]}\n")
+                                for face in faces:
+                                    f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+                            created_files[fmt] = str(output_path)
+                            logger.info(f"    ✅ OBJ (skeleton fallback): {output_path.name}")
+                            
                     except Exception as e:
                         logger.warning(f"    ⚠️  OBJ creation failed: {e}")
+                        # Last resort fallback
+                        try:
+                            mesh = navis.conversion.tree2meshneuron(transformed, tube_points=8, radius_scale_factor=1.0)
+                            with open(output_path, 'w') as f:
+                                vertices = mesh.vertices
+                                faces = mesh.faces
+                                for v in vertices:
+                                    f.write(f"v {v[0]} {v[1]} {v[2]}\n")
+                                for face in faces:
+                                    f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+                            created_files[fmt] = str(output_path)
+                            logger.info(f"    ✅ OBJ (emergency fallback): {output_path.name}")
+                        except Exception as e2:
+                            logger.error(f"    ❌ All OBJ methods failed: {e2}")
                 
                 elif fmt == 'nrrd':
                     # NRRD volume with proper metadata
