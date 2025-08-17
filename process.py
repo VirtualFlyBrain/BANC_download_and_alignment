@@ -52,6 +52,7 @@ def get_vfb_banc_neurons(limit=None):
         # Enhanced query for BANC neurons with folder information from in_register_with relationships
         query = """
         MATCH (s:Site {short_form:'BANC626'})<-[c:hasDbXref]-(i:Individual)<-[:depicts]-(ic:Individual)-[r:in_register_with]->(tc:Template)-[:depicts]-(t:Template) 
+        WHERE exists(r.folder)
         RETURN c.accession[0] as banc_id,
                i.short_form as vfb_id,
                t.short_form as template_id,
@@ -71,7 +72,7 @@ def get_vfb_banc_neurons(limit=None):
             print("No BANC626 site references found, trying broader BANC search...")
             query = """
             MATCH (s:Site)<-[c:hasDbXref]-(i:Individual)<-[:depicts]-(ic:Individual)-[r:in_register_with]->(tc:Template)-[:depicts]-(t:Template) 
-            WHERE s.short_form CONTAINS 'BANC' OR c.accession[0] =~ '720575941.*'
+            WHERE (s.short_form CONTAINS 'BANC' OR c.accession[0] =~ '720575941.*') AND exists(r.folder)
             RETURN c.accession[0] as banc_id,
                    i.short_form as vfb_id,
                    t.short_form as template_id,
