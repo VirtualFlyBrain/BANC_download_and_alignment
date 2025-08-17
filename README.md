@@ -1,29 +1,34 @@
-# BANC → VFB Processing Pipeline
+# BANC → VFB Production Pipeline
 
-Complete pipeline for downloading BANC connectome neuron data and converting it to VFB-compatible formats.
+Complete production-ready pipeline for processing BANC connectome neurons from VFB database integration with automated folder organization.
 
 ## Overview
 
-This pipeline processes neurons from the BANC (Brain and Nerve Cord) fly connectome dataset and prepares them for integration with the Virtual Fly Brain (VFB) knowledge base using **public BANC data** from Google Cloud Storage.
+This pipeline integrates with the Virtual Fly Brain (VFB) knowledge base to automatically process BANC neurons from their production database, organizing output according to VFB folder structure and coordinate templates.
 
-## Current Method
+## Production Method
 
-The pipeline uses:
-- ✅ **Public BANC Data**: Downloads from `gs://lee-lab_brain-and-nerve-cord-fly-connectome/`
-- ✅ **Official BANC Transforms**: Uses BANC team's coordinate transformation functions
-- ✅ **Multi-format Output**: Generates SWC, OBJ, and NRRD files
-- ✅ **No Authentication Required**: Public bucket access via gsutil
+The production pipeline uses:
+
+- ✅ **VFB Database Integration**: Queries VFB kbw database for BANC neurons
+- ✅ **VFB Folder Organization**: Automatic folder structure based on database URLs  
+- ✅ **Production Data Filtering**: Only processes neurons with allocated folder information
+- ✅ **Multi-format Output**: Generates SWC, OBJ, NRRD, and JSON files
+- ✅ **Environment Configuration**: Local development + Jenkins production deployment
 
 ## Quick Start
 
-### Production Command
+### Production Commands
 
 ```bash
-# Process single neuron
-python run_banc_pipeline.py 720575941350274352 --formats swc,obj,nrrd
+# Production pipeline - process all available BANC neurons
+python run_full_banc_production.py --formats swc,obj,nrrd
 
-# Process multiple neurons  
-python run_banc_pipeline.py 720575941350274352 720575941350334256 --formats swc
+# Limited run for testing
+python run_full_banc_production.py --limit 10 --formats swc
+
+# Dry run to see what would be processed
+python run_full_banc_production.py --limit 5 --dry-run
 ```
 
 ### Installation
@@ -44,158 +49,151 @@ pip install -r requirements.txt
 ./install_banc_transforms.sh
 ```
 
+## Environment Configuration
+
+### Local Development
+
+```bash
+# Uses relative paths in current directory
+python run_full_banc_production.py --limit 5 --formats swc
+```
+
+### Jenkins Production
+
+```bash
+# Set production data folder
+export DATA_FOLDER=/IMAGE_WRITE/
+python run_full_banc_production.py --formats swc,obj,nrrd --max-workers 4
+```
+
+## Data Processing
+
+### VFB Database Integration
+
+- **Source**: VFB kbw database (kbw.virtualflybrain.org)
+- **Query**: BANC neurons with `EXISTS(r.folder)` condition for production readiness
+- **Organization**: Automatic folder structure from VFB database URLs
+- **Templates**: Automatic mapping to JRC2018U and JRCVNC2018U coordinate spaces
+
+### Output Formats
+
+- **SWC**: Skeleton format for neuroanatomy tools
+- **OBJ**: 3D mesh for visualization  
+- **NRRD**: Volume format for analysis
+- **JSON**: VFB metadata with processing information
+
+### Folder Organization
+
+Files organized according to VFB database folder structure:
+
+```
+vfb_banc_data/
+├── VFB/i/0010/5bke/VFB_00101567/
+│   └── BANC_720575941559970319/
+│       ├── BANC_720575941559970319.swc
+│       ├── BANC_720575941559970319.obj
+│       ├── BANC_720575941559970319.nrrd
+│       └── BANC_720575941559970319.json
+└── processing_state.json
+```
+
+## Coordinate Transformation
+
+- **Brain neurons**: BANC → JRC2018U template
+- **VNC neurons**: BANC → JRCVNC2018U template
+- **Detection**: Automatic based on y-coordinate threshold
+- **Fallback**: Identity transform if BANC package not installed
+
 ## Dependencies
 
 ### Required
+
 - Python 3.8+
 - navis[all] >= 1.6.0
 - pandas >= 2.0.0
+- vfb-connect
 - Google Cloud SDK (gsutil)
 
 ### Optional (for coordinate transforms)
+
 - BANC package (from GitHub)
 - pytransformix
 - ElastiX binary
 
-## Data Processing
-
-### Input
-- BANC neuron segment IDs (e.g., `720575941350274352`)
-- Available neurons listed at: `gs://lee-lab_brain-and-nerve-cord-fly-connectome/neuron_skeletons/swcs-from-pcg-skel/`
-
-### Output
-- **SWC**: Skeleton format for neuroanatomy tools
-- **OBJ**: 3D mesh for visualization
-- **NRRD**: Volume format for analysis
-- **JSON**: VFB metadata
-
-### Coordinate Transformation
-- **BANC** → **JRC2018F** (brain neurons)
-- **BANC** → **JRCVNC2018F** (VNC neurons)
-- Automatic brain/VNC detection
-- Fallback to identity transform if BANC transforms not installed
-
 ## Project Structure
 
 ```
-├── process.py              # Core processing functions
-├── run_banc_pipeline.py    # Command-line interface
-├── test_pipeline_status.py # Pipeline validation
-├── install_banc_transforms.sh # Coordinate transform setup
-└── requirements.txt        # Python dependencies
+├── run_full_banc_production.py  # Main production pipeline
+├── process.py                   # Core processing functions
+├── requirements.txt             # Python dependencies
+├── install_banc_transforms.sh   # Coordinate transform setup
+└── vfb_banc_data/              # Production output directory
 ```
 
-## Testing
+## Command Line Options
 
 ```bash
-# Test pipeline functionality
-python test_pipeline_status.py
+python run_full_banc_production.py [OPTIONS]
 
-# Quick validation
-python quick_test.py
+Options:
+  --output-dir DIR          Output directory (default: vfb_banc_data)
+  --formats LIST            Output formats: swc,obj,nrrd,json (default: swc,obj,nrrd)
+  --limit N                 Maximum neurons to process
+  --max-workers N           Parallel processing workers (default: 2)
+  --dry-run                 Show what would be processed without processing
+  --no-skip-existing        Reprocess existing neurons
+  --resume                  Resume from last processing state
 ```
 
-### 3. Transformation Strategy
-The bancr R package's `banc_to_JRC2018F` function has a `region` parameter:
-- `region="brain"` - Transforms to JRC2018F brain template
-- `region="VNC"` - Transforms to JRC2018F VNC template
+## Production Deployment
 
-For neurons spanning both regions (DNs, ANs, SAs), the script:
-- Transforms to **both** templates separately
-- Saves multiple output files:
-  - `volume.swc` - Primary region transformation
-  - `volume_brain.swc` - Brain template transformation
-  - `volume_vnc.swc` - VNC template transformation
-- Auto-detects primary region based on spatial extent
+### Local Testing
 
-This ensures proper alignment regardless of where the neuron extends in the CNS.
-
-### 4. R Integration Options
-
-The script provides two ways to use R:
-
-**Option 1: Using rpy2 (Recommended)**
-- Install rpy2: `pip install rpy2`
-- More efficient, keeps R session active
-
-**Option 2: Using subprocess**
-- No additional Python packages needed
-- R must be in your system PATH
-- Slightly slower due to repeated R initialization
-
-### 5. Mesh Transformation
-Mesh transformation through R may require additional handling. The current implementation:
-- Saves mesh as OBJ format
-- Transforms vertices using bancr
-- Reloads transformed mesh
-
-This may need adjustment based on how bancr handles mesh data.
-
-## Testing
-
-### Test Neuron
-Using verified BANC neuron: **720575941499161569**
-- View online: https://codex.flywire.ai/app/cell_details?root_id=720575941499161569&dataset=banc
-- This neuron can be used to verify the pipeline is working correctly
-
-### Quick Access Test
-First, verify BANC access works:
 ```bash
-python test_banc_access.py [OPTIONAL_BODY_ID]
+# Test with small dataset
+python run_full_banc_production.py --limit 3 --dry-run
+
+# Process test neurons
+python run_full_banc_production.py --limit 3 --formats swc
 ```
 
-### Database Query Test
-Start with a small subset by adding a LIMIT clause to your Neo4j query:
+### Jenkins Production
+
+```bash
+# Set environment for production paths
+export DATA_FOLDER=/IMAGE_WRITE/
+
+# Full production run
+python run_full_banc_production.py 
+  --formats swc,obj,nrrd 
+  --max-workers 4 
+  --output-dir vfb_banc_data
+```
+
+## Monitoring
+
+The pipeline creates a `processing_state.json` file that tracks:
+
+- Processed neurons
+- Failed processing attempts  
+- Last run timestamp
+- Processing statistics
+
+## VFB Database Integration
+
+The pipeline queries the VFB database for BANC neurons using:
 
 ```cypher
-MATCH (d:DataSet {short_form:'Bates2025'})<-[:has_source]-(i:Individual)<-[:depicts]-(ic:Individual)
--[r:in_register_with]->(tc:Template)
-RETURN r.filename[0] as root_id, r.folder[0] as folder
-LIMIT 5
+MATCH (s:Site {short_form:'BANC626'})<-[c:hasDbXref]-(i:Individual)<-[:depicts]-(ic:Individual)-[r:in_register_with]->(tc:Template)-[:depicts]-(t:Template) 
+WHERE exists(r.folder)
+RETURN c.accession[0] as banc_id,
+       i.short_form as vfb_id,
+       t.short_form as template_id,
+       r.folder[0] as folder_path
 ```
 
-### Python Console Test
-Test the flywire BANC access directly:
-```python
-from fafbseg import flywire
-# Using verified BANC neuron from codex.flywire.ai
-test_id = 720575941499161569  
-skeleton = flywire.get_skeletons(test_id, dataset='banc')
-print(skeleton)
-```
+The `EXISTS(r.folder)` condition ensures only neurons with allocated folder information are processed, which is critical during ongoing data loading where folder information is added once per day.
 
-### Single Neuron Test
-Test the full pipeline with one neuron:
-```bash
-# Process the test neuron (720575941499161569)
-python test_single_neuron.py
+## License
 
-# Or specify a different neuron
-python test_single_neuron.py 720575941499161569 ./output_dir
-```
-
-## Output Organization
-
-### VFB Folder Structure
-Files follow the standard VFB hierarchy:
-`/VFB/i/[first_4_digits]/[next_4_digits]/[template_short_form]/`
-
-| Template | VFB Short Form | Description |
-|----------|---------------|-------------|
-| JRC2018U | VFB_00101567 | Brain unisex template |
-| JRC2018VNCunisex | VFB_00200000 | VNC unisex template |
-
-Example output paths:
-```
-# DN (descending neuron) - spans both regions
-.../VFB/i/1234/5678/VFB_00101567/volume.swc  # Brain alignment
-.../VFB/i/1234/5678/VFB_00200000/volume.swc  # VNC alignment
-
-# Local brain neuron - single region
-.../VFB/i/1234/5678/VFB_00101567/volume.swc
-
-# Motor neuron - VNC only
-.../VFB/i/1234/5678/VFB_00200000/volume.swc
-```
-
-The Neo4j query provides the base folder URL with the neuron path structure, and the script appends the appropriate template short_form based on successful transformations.
+This project follows the same license as the BANC connectome data.
