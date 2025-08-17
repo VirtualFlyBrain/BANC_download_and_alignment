@@ -1,0 +1,17 @@
+{
+  "neuron_id": "720575941350274352",
+  "source": "BANC",
+  "template_space": "JRC2018U",
+  "processing_date": "2025-08-17T09:49:02.935359",
+  "coordinate_units": "micrometers",
+  "voxel_size": [
+    0.622,
+    0.622,
+    0.622
+  ],
+  "files": {
+    "swc": "/Users/rcourt/GIT/BANC_download_and_alignment/test_output/vfb/JRC2018U/BANC_720575941350274352/BANC_720575941350274352.swc"
+  },
+  "node_count": 230,
+  "cable_length": 1318.184814453125
+}

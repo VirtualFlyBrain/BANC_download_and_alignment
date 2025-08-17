@@ -26,6 +26,7 @@ import sys
 import json
 import time
 import logging
+import re
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
@@ -52,20 +53,69 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def resolve_data_folder(base_path):
+    """
+    Resolve data folder path with environment-specific mappings.
+    
+    Handles mapping between:
+    - Local development: /data/ stays as /data/
+    - Jenkins production: /data/ becomes /IMAGE_WRITE/
+    
+    Args:
+        base_path (str): Base output path
+        
+    Returns:
+        Path: Resolved path object
+    """
+    # Get environment-specific data folder
+    data_folder = os.getenv('DATA_FOLDER', '/data/')
+    
+    # Ensure trailing slash
+    if not data_folder.endswith('/'):
+        data_folder += '/'
+    
+    base_path = str(base_path)
+    
+    # Handle path resolution based on environment
+    if base_path.startswith('/data/'):
+        # Replace /data/ with the configured DATA_FOLDER
+        resolved_path = base_path.replace('/data/', data_folder, 1)
+    elif 'IMAGE_WRITE' in data_folder and not base_path.startswith('/IMAGE_WRITE/'):
+        # If DATA_FOLDER points to IMAGE_WRITE but path doesn't include it
+        if base_path.startswith('/'):
+            resolved_path = data_folder.rstrip('/') + base_path
+        else:
+            resolved_path = data_folder + base_path
+    else:
+        # Use path as-is if it doesn't match patterns
+        resolved_path = base_path
+    
+    resolved = Path(resolved_path)
+    
+    logger.info(f"Path resolution: {base_path} → {resolved}")
+    logger.info(f"DATA_FOLDER environment: {data_folder}")
+    
+    return resolved
+
+
 class BANCProductionProcessor:
     """Complete BANC production processing pipeline."""
     
     def __init__(self, output_dir='vfb_banc_data', formats=['swc', 'obj', 'nrrd'], 
-                 skip_existing=True, max_workers=1):
-        self.output_dir = Path(output_dir)
+                 skip_existing=True, max_workers=1, brain_template='JRC2018U', vnc_template='JRCVNC2018U'):
+        
+        # Resolve output directory with environment-specific mapping
+        self.output_dir = resolve_data_folder(output_dir)
         self.formats = formats
         self.skip_existing = skip_existing
         self.max_workers = max_workers
+        self.brain_template = brain_template
+        self.vnc_template = vnc_template
         
-        # Template directory structure
+        # Template directory structure using configurable template names
         self.template_dirs = {
-            'JRC2018U': self.output_dir / 'JRC2018U',
-            'JRCVNC2018U': self.output_dir / 'JRCVNC2018U'
+            self.brain_template: self.output_dir / self.brain_template,
+            self.vnc_template: self.output_dir / self.vnc_template
         }
         
         # Create directory structure
@@ -78,6 +128,14 @@ class BANCProductionProcessor:
     def setup_directories(self):
         """Create template-specific output directories."""
         logger.info("Setting up directory structure...")
+        logger.info(f"Base output directory: {self.output_dir}")
+        logger.info(f"Brain template: {self.brain_template}")
+        logger.info(f"VNC template: {self.vnc_template}")
+        
+        # Create base output directory
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create template subdirectories
         for template, path in self.template_dirs.items():
             path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created directory: {path}")
@@ -112,12 +170,12 @@ class BANCProductionProcessor:
             
             # BANC coordinate analysis: y > ~320,000 nm is VNC region
             if avg_y > 320000:
-                return 'JRCVNC2018U'
+                return self.vnc_template
             else:
-                return 'JRC2018U'
+                return self.brain_template
         except Exception as e:
-            logger.warning(f"Could not determine template space: {e}, defaulting to JRC2018U")
-            return 'JRC2018U'
+            logger.warning(f"Could not determine template space: {e}, defaulting to {self.brain_template}")
+            return self.brain_template
     
     def get_output_paths(self, neuron_id, template_space):
         """Generate output file paths for a neuron."""
@@ -148,11 +206,11 @@ class BANCProductionProcessor:
             coords = skeleton.nodes[['x', 'y', 'z']].values
             
             # Determine voxel size based on template space
-            if template_space == 'JRC2018U':
+            if template_space == self.brain_template:
                 # JRC2018U standard voxel size: 0.622 x 0.622 x 0.622 µm
                 voxel_size = [0.622, 0.622, 0.622]
                 space = 'left-posterior-superior'
-            else:  # JRCVNC2018U
+            else:  # VNC template
                 # JRCVNC2018U standard voxel size: 0.4 x 0.4 x 0.4 µm  
                 voxel_size = [0.4, 0.4, 0.4]
                 space = 'left-posterior-superior'
@@ -229,7 +287,7 @@ class BANCProductionProcessor:
             
             # Step 4: Transform coordinates
             logger.info(f"  🔄 Transforming coordinates...")
-            if template_space == 'JRCVNC2018U':
+            if template_space == self.vnc_template:
                 # BANC VNC → JRCVNC2018F → JRCVNC2018U
                 transformed = transform_skeleton_coordinates(skeleton, 'BANC', 'VFB')
             else:
@@ -287,7 +345,7 @@ class BANCProductionProcessor:
                 'template_space': template_space,
                 'processing_date': datetime.now().isoformat(),
                 'coordinate_units': 'micrometers',
-                'voxel_size': [0.622, 0.622, 0.622] if template_space == 'JRC2018U' else [0.4, 0.4, 0.4],
+                'voxel_size': [0.622, 0.622, 0.622] if template_space == self.brain_template else [0.4, 0.4, 0.4],
                 'files': created_files,
                 'node_count': len(transformed.nodes),
                 'cable_length': float(transformed.cable_length) if hasattr(transformed, 'cable_length') else None
@@ -453,11 +511,22 @@ def main():
         description="BANC Production Pipeline - Process all BANC neurons for VFB",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Environment Variables:
+  DATA_FOLDER    Base data folder path (default: /data/)
+                 Jenkins: set to /IMAGE_WRITE/
+                 Local: use default or set to repo subfolder
+
 Examples:
+  # Local development
   python run_full_banc_production.py --limit 10 --dry-run
-  python run_full_banc_production.py --output-dir /vfb/data
-  python run_full_banc_production.py --formats swc,obj,nrrd --max-workers 4
-  python run_full_banc_production.py --resume --skip-existing
+  
+  # Local with custom data folder
+  export DATA_FOLDER=/Users/user/project/data/
+  python run_full_banc_production.py --output-dir /data/vfb
+  
+  # Jenkins production
+  export DATA_FOLDER=/IMAGE_WRITE/
+  python run_full_banc_production.py --output-dir /data/vfb --formats swc,obj,nrrd
         """
     )
     
@@ -482,7 +551,20 @@ Examples:
     parser.add_argument('--resume', action='store_true',
                        help='Resume from previous run (default behavior)')
     
+    parser.add_argument('--brain-template', default='JRC2018U',
+                       help='Brain template folder name (default: JRC2018U)')
+    
+    parser.add_argument('--vnc-template', default='JRCVNC2018U',
+                       help='VNC template folder name (default: JRCVNC2018U)')
+    
     args = parser.parse_args()
+    
+    # Show environment configuration
+    data_folder = os.getenv('DATA_FOLDER', '/data/')
+    logger.info(f"Environment DATA_FOLDER: {data_folder}")
+    logger.info(f"Output directory argument: {args.output_dir}")
+    logger.info(f"Brain template: {args.brain_template}")
+    logger.info(f"VNC template: {args.vnc_template}")
     
     # Parse formats
     formats = [f.strip() for f in args.formats.split(',')]
@@ -498,7 +580,9 @@ Examples:
         output_dir=args.output_dir,
         formats=formats,
         skip_existing=not args.no_skip_existing,
-        max_workers=args.max_workers
+        max_workers=args.max_workers,
+        brain_template=args.brain_template,
+        vnc_template=args.vnc_template
     )
     
     # Run pipeline
