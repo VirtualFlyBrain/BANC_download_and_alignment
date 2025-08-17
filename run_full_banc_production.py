@@ -197,61 +197,87 @@ class BANCProductionProcessor:
         
         return all(path.exists() and path.stat().st_size > 0 for path in paths.values())
     
-    def create_nrrd_with_metadata(self, skeleton, output_path, template_space):
-        """Create NRRD file with proper voxel metadata."""
+    def create_nrrd_from_obj(self, obj_path, output_path, template_space, voxel_size_um=None):
+        """Create NRRD volumetric file from OBJ mesh with proper template metadata."""
         try:
             import nrrd
-            
-            coords = skeleton.nodes[['x', 'y', 'z']].values
+            import navis
             
             # Determine voxel size based on template space
-            if 'JRC2018U' in template_space:
-                # JRC2018U standard voxel size: 0.622 x 0.622 x 0.622 µm
-                voxel_size = [0.622, 0.622, 0.622]
+            if voxel_size_um is None:
+                if 'JRC2018U' in template_space:
+                    # JRC2018U standard voxel size: 0.622 x 0.622 x 0.622 µm
+                    voxel_size = [0.622, 0.622, 0.622]
+                    space = 'left-posterior-superior'
+                else:  # VNC template (JRCVNC2018U)
+                    # JRCVNC2018U standard voxel size: 0.4 x 0.4 x 0.4 µm  
+                    voxel_size = [0.4, 0.4, 0.4]
+                    space = 'left-posterior-superior'
+            else:
+                voxel_size = voxel_size_um
                 space = 'left-posterior-superior'
-            else:  # VNC template (JRCVNC2018U)
-                # JRCVNC2018U standard voxel size: 0.4 x 0.4 x 0.4 µm  
-                voxel_size = [0.4, 0.4, 0.4]
-                space = 'left-posterior-superior'
             
-            # Create volume from skeleton coordinates
-            min_coords = coords.min(axis=0)
-            max_coords = coords.max(axis=0)
+            # Load the OBJ mesh with navis
+            logger.info(f"    Loading OBJ mesh: {obj_path}")
+            mesh = navis.read_mesh(str(obj_path))
             
-            # Convert to voxel coordinates
-            min_voxel = (min_coords / voxel_size).astype(int)
-            max_voxel = (max_coords / voxel_size).astype(int)
-            shape = max_voxel - min_voxel + 1
+            # Convert mesh to volumetric representation
+            logger.info(f"    Converting mesh to volume with voxel size {voxel_size} µm")
             
-            # Create binary volume
-            volume = np.zeros(shape, dtype=np.uint8)
+            # Get mesh bounds
+            vertices = mesh.vertices
+            min_coords = vertices.min(axis=0)
+            max_coords = vertices.max(axis=0)
             
-            # Mark skeleton points
-            for coord in coords:
-                voxel_coord = ((coord - min_coords) / voxel_size).astype(int)
-                if all(0 <= voxel_coord[i] < shape[i] for i in range(3)):
-                    volume[tuple(voxel_coord)] = 255
+            # Calculate volume dimensions in voxels
+            volume_size_um = max_coords - min_coords
+            volume_size_voxels = np.ceil(volume_size_um / voxel_size).astype(int)
             
-            # NRRD header with proper metadata
+            logger.info(f"    Volume size: {volume_size_um} µm = {volume_size_voxels} voxels")
+            
+            # Create volume using navis mesh voxelization
+            try:
+                # Use navis to voxelize the mesh
+                volume = navis.voxelize(mesh, pitch=voxel_size, counts=False)
+                
+                # Convert to binary uint8
+                volume_array = volume.values.astype(np.uint8) * 255
+                
+            except Exception as e:
+                logger.warning(f"    Navis voxelization failed: {e}, using simple approach")
+                
+                # Fallback: create volume from vertex positions
+                volume_array = np.zeros(volume_size_voxels, dtype=np.uint8)
+                
+                # Mark voxels containing vertices
+                for vertex in vertices:
+                    voxel_coord = ((vertex - min_coords) / voxel_size).astype(int)
+                    # Ensure coordinates are within bounds
+                    voxel_coord = np.clip(voxel_coord, 0, volume_size_voxels - 1)
+                    volume_array[tuple(voxel_coord)] = 255
+            
+            # NRRD header with proper template metadata
             header = {
                 'space': space,
                 'space directions': np.diag(voxel_size),
                 'space origin': min_coords,
                 'units': ['µm', 'µm', 'µm'],
                 'labels': ['x', 'y', 'z'],
-                'encoding': 'gzip'
+                'encoding': 'gzip',
+                'content': f'{template_space} neuron volume',
+                'description': f'Voxelized neuron mesh from BANC data, template: {template_space}'
             }
             
             # Save NRRD with metadata
-            nrrd.write(str(output_path), volume, header)
-            logger.info(f"Created NRRD with voxel size {voxel_size} µm")
+            nrrd.write(str(output_path), volume_array, header)
+            logger.info(f"    Created NRRD volume: {volume_array.shape} voxels, {voxel_size} µm/voxel")
             return True
             
         except ImportError:
             logger.error("NRRD format requires 'pynrrd' package: pip install pynrrd")
             return False
         except Exception as e:
-            logger.error(f"NRRD creation failed: {e}")
+            logger.error(f"NRRD creation from OBJ failed: {e}")
             return False
     
     def process_single_neuron(self, neuron_info):
@@ -380,12 +406,17 @@ class BANCProductionProcessor:
                             logger.error(f"    ❌ All OBJ methods failed: {e2}")
                 
                 elif fmt == 'nrrd':
-                    # NRRD volume with proper metadata
-                    if self.create_nrrd_with_metadata(transformed, output_path, template_space):
-                        created_files[fmt] = str(output_path)
-                        logger.info(f"    ✅ NRRD: {output_path.name}")
+                    # NRRD volume from OBJ mesh with proper metadata
+                    obj_path = output_paths.get('obj')
+                    if obj_path and obj_path in created_files:
+                        # Use the OBJ file we just created
+                        if self.create_nrrd_from_obj(obj_path, output_path, template_space):
+                            created_files[fmt] = str(output_path)
+                            logger.info(f"    ✅ NRRD (from mesh): {output_path.name}")
+                        else:
+                            logger.warning(f"    ⚠️  NRRD creation from mesh failed")
                     else:
-                        logger.warning(f"    ⚠️  NRRD creation failed")
+                        logger.warning(f"    ⚠️  NRRD creation skipped: no OBJ file available")
             
             logger.info(f"  🎉 Successfully processed {neuron_id}")
             
